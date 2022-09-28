@@ -24,13 +24,13 @@ from math import sqrt
 
 import ezdxf.colors as rgb
 
-
 # Most CAD programs seem to handle index 7 as either white or black
 # depending on the drawing's background colour. To avoid this (given
 # matplotlib normally draws a white background anyway) we automatically
 # map black values to a very dark grey.
 BLACK = 250
 WHITE = 255
+BYLAYER = 256
 
 
 def _distance(target, test):

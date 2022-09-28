@@ -25,11 +25,10 @@ import tempfile
 import unittest
 
 import matplotlib
+import numpy as np
 from matplotlib import pyplot as plt
-from numpy.random import random
-
 from mpldxf import backend_dxf
-
+from numpy.random import random
 
 matplotlib.backend_bases.register_backend('dxf',
                                           backend_dxf.FigureCanvas)
@@ -47,8 +46,8 @@ class DxfBackendTestCase(unittest.TestCase):
             shutil.rmtree(self.test_dir)
 
     def test_plot(self):
-        """Test a simple line-plot command."""
-        plt.plot(range(5), [4, 3, 2, 1, 0])
+        """Test a simple line with markers plot command."""
+        plt.plot(range(5), [4, 3, 2, 1, 0], 'o-')
         outfile = os.path.join(self.test_dir, 'test_plot.dxf')
         plt.savefig(outfile)
         self.assertTrue(os.path.isfile(outfile))
@@ -72,4 +71,20 @@ class DxfBackendTestCase(unittest.TestCase):
         plt.contourf(random((30, 30)))
         outfile = os.path.join(self.test_dir, 'test_contourf.dxf')
         plt.savefig(outfile)
+        self.assertTrue(os.path.isfile(outfile))
+
+    def test_bar(self):
+        """Test a simple bar with hatches."""
+        hatches = ['/', '\\', '|', '-', '+', 'x', 'o', 'O', '.', '*', '/o', '\\|', '|*', '-\\', '+o', 'x*', 'o-', 'O|', 'O.', '*-']
+        colors = [*['none'] * len(hatches), *['cyan', 'blue', 'yellow', 'green', 'red'] * int(len(hatches) / 5)]
+        fig, ax = plt.subplots(figsize=(15, 15))
+        ax.bar(
+            x=[1] * len(hatches) + [2] * len(hatches),
+            height=1,
+            bottom=list(np.negative(range(len(hatches)))) * 2,
+            hatch=hatches * 2,
+            color=colors
+        )
+        outfile = os.path.join(self.test_dir, 'test_bar.dxf')
+        fig.savefig(outfile)
         self.assertTrue(os.path.isfile(outfile))

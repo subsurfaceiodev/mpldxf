@@ -49,6 +49,7 @@ import matplotlib.collections as mplc
 import numpy as np
 from shapely.geometry import LineString, Polygon
 import ezdxf
+import ezdxf.math.clipping
 
 from . import dxf_colors
 
@@ -122,7 +123,7 @@ class RendererDxf(RendererBase):
                         [bbox.x0, bbox.y1]]
 
             if obj == 'patch':
-                vertices = ezdxf.math.clip_polygon_2d(cliprect, vertices)
+                vertices = ezdxf.math.clipping.clip_polygon_2d(cliprect, vertices)
             elif obj == 'line2d':
                 cliprect = Polygon(cliprect)
                 line = LineString(vertices)
@@ -151,7 +152,7 @@ class RendererDxf(RendererBase):
     def _draw_mpl_line2d(self, gc, path, transform):
         line = self._draw_mpl_lwpoly(gc, path, transform, obj='line2d')
 
-    def _draw_mpl_patch(self, gc, path, transform, rgbFace=None): 
+    def _draw_mpl_patch(self, gc, path, transform, rgbFace=None):
         '''Draw a matplotlib patch object
         '''
 
@@ -210,7 +211,7 @@ class RendererDxf(RendererBase):
                     _hpath = hpatht.transformed(_trans)
 
                     # turn into list of vertices to make up polygon
-                    _path = _hpath.to_polygons(closed_only=False) 
+                    _path = _hpath.to_polygons(closed_only=False)
 
                     for vertices in _path:
                         # clip each set to the parent path
@@ -219,7 +220,7 @@ class RendererDxf(RendererBase):
                             line = LineString(vertices)
                             clipped = line.intersection(clippoly).coords
                         else:
-                            clipped = ezdxf.math.clip_polygon_2d(pline.vertices(), vertices)
+                            clipped = ezdxf.math.clipping.clip_polygon_2d(pline.vertices(), vertices)
 
                         # if there is something to plot
                         if len(clipped)>0:
@@ -247,22 +248,22 @@ class RendererDxf(RendererBase):
             line = self._draw_mpl_patch(gc, path, transform, rgbFace)
 
         elif self._groupd[-1] == 'line2d':
-            line = self._draw_mpl_line2d(gc, path, transform) 
+            line = self._draw_mpl_line2d(gc, path, transform)
 
 
-    # Note if this is used then tick marks and lines with markers go through this function
-    def draw_markers(self, gc, marker_path, marker_trans, path, trans, rgbFace=None):
-        # print('\nEntered ###DRAW_MARKERS###')
-        # print('\t', self._groupd)
-        # print('\t', gc.__dict__)
-        # print('\tMarker Path:', type(marker_path), marker_path.transformed(marker_trans).__dict__)
-        # print('\tPath:', type(path), path.transformed(trans).__dict__)
-        if (self._groupd[-1] == 'line2d') & ('tick' in self._groupd[-2]):
-            newpath = path.transformed(trans)
-            dx, dy = newpath.vertices[0]
-            _trans = marker_trans + Affine2D().translate(dx, dy)
-            line = self._draw_mpl_line2d(gc, marker_path, _trans) 
-        # print('\tLeft ###DRAW_MARKERS###')
+    # # Note if this is used then tick marks and lines with markers go through this function
+    # def draw_markers(self, gc, marker_path, marker_trans, path, trans, rgbFace=None):
+    #     # print('\nEntered ###DRAW_MARKERS###')
+    #     # print('\t', self._groupd)
+    #     # print('\t', gc.__dict__)
+    #     # print('\tMarker Path:', type(marker_path), marker_path.transformed(marker_trans).__dict__)
+    #     # print('\tPath:', type(path), path.transformed(trans).__dict__)
+    #     if (self._groupd[-1] == 'line2d') & ('tick' in self._groupd[-2]):
+    #         newpath = path.transformed(trans)
+    #         dx, dy = newpath.vertices[0]
+    #         _trans = marker_trans + Affine2D().translate(dx, dy)
+    #         line = self._draw_mpl_line2d(gc, marker_path, _trans)
+    #     # print('\tLeft ###DRAW_MARKERS###')
 
     def draw_image(self, gc, x, y, im):
         pass
@@ -277,9 +278,7 @@ class RendererDxf(RendererBase):
 
         s=s.replace(u"\u2212", "-")
         s.encode('ascii', 'ignore').decode()
-        text = self.modelspace.add_text(s, {
-            'height': fontsize,
-            'rotation': angle,
+        text = self.modelspace.add_text(s, height=fontsize, rotation=angle, dxfattribs={
             'color': dxfcolor,
         })
 
@@ -375,8 +374,7 @@ class FigureCanvasDxf(FigureCanvasBase):
         return renderer.drawing
 
     # Add DXF to the class-scope filetypes dictionary
-    filetypes = FigureCanvasBase.filetypes.copy()
-    filetypes['dxf'] = 'DXF'
+    filetypes = {**FigureCanvasBase.filetypes, 'dxf': 'Drawing Exchange Format'}
 
     def print_dxf(self, filename, *args, **kwargs):
         """
@@ -388,7 +386,6 @@ class FigureCanvasDxf(FigureCanvasBase):
     def get_default_filetype(self):
         return 'dxf'
 
-FigureManagerDXF = FigureManagerBase
 
 ########################################################################
 #
@@ -397,3 +394,4 @@ FigureManagerDXF = FigureManagerBase
 ########################################################################
 
 FigureCanvas = FigureCanvasDxf
+FigureManagerDXF = FigureManagerBase
