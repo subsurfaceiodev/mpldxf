@@ -19,16 +19,16 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
+import matplotlib
+import numpy as np
 import os
 import shutil
 import tempfile
 import unittest
-
-import matplotlib
-import numpy as np
 from matplotlib import pyplot as plt
-from mpldxf import backend_dxf
 from numpy.random import random
+
+from mpldxf import backend_dxf
 
 matplotlib.backend_bases.register_backend('dxf',
                                           backend_dxf.FigureCanvas)
@@ -40,6 +40,10 @@ class DxfBackendTestCase(unittest.TestCase):
     def setUp(self):
         self.test_dir = tempfile.mkdtemp()
 
+    def setFig(self):
+        fig, ax = plt.subplots(figsize=(15, 15))
+        return fig, ax
+
     def tearDown(self):
         plt.clf()
         if os.path.isdir(self.test_dir):
@@ -47,9 +51,14 @@ class DxfBackendTestCase(unittest.TestCase):
 
     def test_plot(self):
         """Test a simple line with markers plot command."""
-        plt.plot(range(5), [4, 3, 2, 1, 0], 'o-')
+        fig, ax = self.setFig()
+        ax.plot(range(5), [4, 3, 2, 1, 0], 'o-', label='data')
+        ax.axvline(x=1)
+        ax.axvspan(2, 3, zorder=-1, color='green')
+        ax.legend()
+        ax.set(xscale='log')
         outfile = os.path.join(self.test_dir, 'test_plot.dxf')
-        plt.savefig(outfile)
+        fig.savefig(outfile)
         self.assertTrue(os.path.isfile(outfile))
 
     def test_boxplot(self):
@@ -75,9 +84,10 @@ class DxfBackendTestCase(unittest.TestCase):
 
     def test_bar(self):
         """Test a simple bar with hatches."""
-        hatches = ['/', '\\', '|', '-', '+', 'x', 'o', 'O', '.', '*', '/o', '\\|', '|*', '-\\', '+o', 'x*', 'o-', 'O|', 'O.', '*-']
+        fig, ax = self.setFig()
+        hatches = ['/', '\\', '|', '-', '+', 'x', 'o', 'O', '.', '*', '/o', '\\|', '|*', '-\\', '+o', 'x*', 'o-', 'O|',
+                   'O.', '*-']
         colors = [*['none'] * len(hatches), *['cyan', 'blue', 'yellow', 'green', 'red'] * int(len(hatches) / 5)]
-        fig, ax = plt.subplots(figsize=(15, 15))
         ax.bar(
             x=[1] * len(hatches) + [2] * len(hatches),
             height=1,

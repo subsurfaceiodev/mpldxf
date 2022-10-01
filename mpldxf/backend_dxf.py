@@ -10,7 +10,7 @@ Use as a matplotlib external backend:
 
 or register:
 
-  matplotlib.backend_bases.register_backend('dxf', FigureCanvasDxf)
+  matplotlib.backend_bases.register_backend('dxf', FigureCanvasDXF)
 
 Based on matplotlib.backends.backend_template.py.
 
@@ -36,20 +36,20 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
+
+import math
 import os
 import sys
-import math
 
-import matplotlib
-from matplotlib.backend_bases import (RendererBase, FigureCanvasBase,
-                                      GraphicsContextBase, FigureManagerBase)
-from matplotlib.transforms import Affine2D
-import matplotlib.transforms as transforms
-import matplotlib.collections as mplc
-import numpy as np
-from shapely.geometry import LineString, Polygon
 import ezdxf
 import ezdxf.math.clipping
+import numpy as np
+from ezdxf.enums import TextEntityAlignment
+from matplotlib.backend_bases import (RendererBase, FigureCanvasBase,
+                                      GraphicsContextBase, FigureManagerBase)
+from matplotlib.backend_bases import _Backend
+from matplotlib.transforms import Affine2D
+from shapely.geometry import LineString, Polygon
 
 from . import dxf_colors
 
@@ -71,18 +71,19 @@ def rgb_to_dxf(rgb_val):
         dxfcolor = dxf_colors.WHITE
     # change black to white
     elif np.allclose(np.array(rgb_val[:3]), np.zeros(3)):
-        dxfcolor = dxf_colors.nearest_index([255,255,255])
+        dxfcolor = dxf_colors.nearest_index([255, 255, 255])
     else:
         dxfcolor = dxf_colors.nearest_index([255.0 * val for val in rgb_val[:3]])
     return dxfcolor
 
 
-class RendererDxf(RendererBase):
+class RendererDXF(RendererBase):
     """
     The renderer handles drawing/rendering operations.
 
     Renders the drawing using the ``ezdxf`` package.
     """
+
     def __init__(self, width, height, dpi, dxfversion):
         RendererBase.__init__(self)
         self.height = height
@@ -96,21 +97,27 @@ class RendererDxf(RendererBase):
         """Create a drawing, set some global information and add
            the layers we need.
         """
-        drawing = ezdxf.new(dxfversion=self.dxfversion)
+        drawing = ezdxf.new(dxfversion=self.dxfversion, setup=True)
+        drawing.styles.add('Arial', font='Arial.ttf')
         modelspace = drawing.modelspace()
         drawing.header['$EXTMIN'] = (0, 0, 0)
         drawing.header['$EXTMAX'] = (self.width, self.height, 0)
+        drawing.header["$LWDISPLAY"] = 1
         self.drawing = drawing
         self.modelspace = modelspace
 
     def clear(self):
         """Reset the renderer."""
-        super(RendererDxf, self).clear()
+        super(RendererDXF, self).clear()
         self._init_drawing()
 
     def _get_polyline_attribs(self, gc):
         attribs = {}
+        offset, seq = gc.get_dashes()
+        if seq is not None:
+            attribs['linetype'] = 'DASHED'
         attribs['color'] = rgb_to_dxf(gc.get_rgb())
+        attribs['lineweight'] = self.points_to_pixels(gc.get_linewidth()) * 10 * 2
         return attribs
 
     def _clip_mpl(self, gc, vertices, obj):
@@ -122,21 +129,23 @@ class RendererDxf(RendererBase):
                         [bbox.x1, bbox.y1],
                         [bbox.x0, bbox.y1]]
 
-            if obj == 'patch':
+            if obj in ['patch', 'line2d']:
                 vertices = ezdxf.math.clipping.clip_polygon_2d(cliprect, vertices)
-            elif obj == 'line2d':
-                cliprect = Polygon(cliprect)
-                line = LineString(vertices)
-                vertices = line.intersection(cliprect).coords
+            # elif obj == 'line2d':
+            #     cliprect = Polygon(cliprect)
+            #     line = LineString(vertices)
+            #     vertices = line.intersection(cliprect).coords
 
         return vertices
 
     def _draw_mpl_lwpoly(self, gc, path, transform, obj):
-        #TODO rework for BEZIER curves
-        if obj=='patch':
+        # TODO rework for BEZIER curves
+        if obj in ['patch', 'QuadMesh', 'Poly3DCollection']:
             close = True
-        elif obj=='line2d':
+        elif obj in ['line2d', 'LineCollection', 'Line3DCollection', 'PathCollection']:
             close = False
+        else:
+            raise NotImplementedError
 
         dxfattribs = self._get_polyline_attribs(gc)
         vertices = path.transformed(transform).vertices
@@ -145,18 +154,15 @@ class RendererDxf(RendererBase):
         vertices = self._clip_mpl(gc, vertices, obj=obj)
 
         entity = self.modelspace.add_lwpolyline(points=vertices,
-                                        close=close,
-                                        dxfattribs=dxfattribs)
+                                                close=close,
+                                                dxfattribs=dxfattribs)
         return entity
 
-    def _draw_mpl_line2d(self, gc, path, transform):
-        line = self._draw_mpl_lwpoly(gc, path, transform, obj='line2d')
-
-    def _draw_mpl_patch(self, gc, path, transform, rgbFace=None):
+    def _draw_mpl_patch(self, gc, path, transform, rgbFace=None, obj=None):
         '''Draw a matplotlib patch object
         '''
 
-        poly = self._draw_mpl_lwpoly(gc, path, transform, obj='patch')
+        poly = self._draw_mpl_lwpoly(gc, path, transform, obj=obj)
 
         # check to see if the patch is filled
         if rgbFace is not None:
@@ -180,14 +186,14 @@ class RendererDxf(RendererBase):
         if hatch is not None:
             # find extents and center of the original unclipped parent path
             ext = path.get_extents(transform=transform)
-            dx = ext.x1-ext.x0
-            cx = 0.5*(ext.x1+ext.x0)
-            dy = ext.y1-ext.y0
-            cy = 0.5*(ext.y1+ext.y0)
+            dx = ext.x1 - ext.x0
+            cx = 0.5 * (ext.x1 + ext.x0)
+            dy = ext.y1 - ext.y0
+            cy = 0.5 * (ext.y1 + ext.y0)
 
             # matplotlib uses a 1-inch square hatch, so find out how many rows
             # and columns will be needed to fill the parent path
-            rows, cols = math.ceil(dy/self.dpi)-1, math.ceil(dx/self.dpi)-1
+            rows, cols = math.ceil(dy / self.dpi) - 1, math.ceil(dx / self.dpi) - 1
 
             # get color of the hatch
             rgb = gc.get_hatch_color()
@@ -196,17 +202,17 @@ class RendererDxf(RendererBase):
             # get hatch paths
             hpath = gc.get_hatch_path()
 
-            # this is a tranform that produces a properly scaled hatch in the center
+            # this is a transform that produces a properly scaled hatch in the center
             # of the parent hatch
             _transform = Affine2D().translate(-0.5, -0.5).scale(self.dpi).translate(cx, cy)
             hpatht = hpath.transformed(_transform)
 
             # print("\tHatch Path:", hpatht)
             # now place the hatch to cover the parent path
-            for irow in range(-rows, rows+1):
-                for icol in range(-cols, cols+1):
+            for irow in range(-rows, rows + 1):
+                for icol in range(-cols, cols + 1):
                     # transformation from the center of the parent path
-                    _trans = Affine2D().translate(icol*self.dpi, irow*self.dpi)
+                    _trans = Affine2D().translate(icol * self.dpi, irow * self.dpi)
                     # transformed hatch
                     _hpath = hpatht.transformed(_trans)
 
@@ -218,16 +224,22 @@ class RendererDxf(RendererBase):
                         if len(vertices) == 2:
                             clippoly = Polygon(pline.vertices())
                             line = LineString(vertices)
-                            clipped = line.intersection(clippoly).coords
+                            try:
+                                clipped = line.intersection(clippoly).coords
+                            except NotImplementedError:
+                                continue  # PENDING TO FIX WHEN SAVING LOGPLOT
                         else:
-                            clipped = ezdxf.math.clipping.clip_polygon_2d(pline.vertices(), vertices)
+                            try:
+                                clipped = ezdxf.math.clipping.clip_polygon_2d(pline.vertices(), vertices)
+                            except ValueError:
+                                continue  # PENDING TO FIX WHEN SAVING LOGPLOT
 
                         # if there is something to plot
-                        if len(clipped)>0:
+                        if len(clipped) > 0:
                             if len(vertices) == 2:
                                 attrs = {'color': dxfcolor}
                                 self.modelspace.add_lwpolyline(points=clipped,
-                                                dxfattribs=attrs)
+                                                               dxfattribs=attrs)
                             else:
                                 # A non-filled polygon or a line - use LWPOLYLINE entity
                                 hatch = self.modelspace.add_hatch(color=dxfcolor)
@@ -242,14 +254,7 @@ class RendererDxf(RendererBase):
         # hatch = gc.get_hatch()
         # if hatch is not None:
         #     print('\tHatch Path', gc.get_hatch_path().__dict__)
-
-        if self._groupd[-1] == 'patch':
-            # print('Draw Patch')
-            line = self._draw_mpl_patch(gc, path, transform, rgbFace)
-
-        elif self._groupd[-1] == 'line2d':
-            line = self._draw_mpl_line2d(gc, path, transform)
-
+        self._draw_mpl_patch(gc, path, transform, rgbFace, obj=self._groupd[-1])
 
     # # Note if this is used then tick marks and lines with markers go through this function
     # def draw_markers(self, gc, marker_path, marker_trans, path, trans, rgbFace=None):
@@ -265,36 +270,64 @@ class RendererDxf(RendererBase):
     #         line = self._draw_mpl_line2d(gc, marker_path, _trans)
     #     # print('\tLeft ###DRAW_MARKERS###')
 
-    def draw_image(self, gc, x, y, im):
+    def draw_image(self, gc, x, y, im, transform=None):
         pass
 
     def draw_text(self, gc, x, y, s, prop, angle, ismath=False, mtext=None):
+
+        bbox = gc.get_clip_rectangle()
+
+        if bbox is not None:
+            # ignore text outside bbox
+            if not bbox.x0 <= x <= bbox.x1 or not bbox.y0 <= y <= bbox.y1:
+                return
+
+        if ismath:
+            width, height, descent, glyphs, rects = \
+                self._text2path.mathtext_parser.parse(s, 72, prop)
+            s_parsed = ''
+            fontsize_prev = None
+            for font, fontsize, num, ox, oy in glyphs:
+                s_parsed_current = chr(num)
+                if fontsize_prev is not None and fontsize < fontsize_prev:
+                    DIGITS = dict(zip(u"0123456789", u"⁰¹²³⁴⁵⁶⁷⁸⁹"))
+                    s_parsed_current = DIGITS.get(s_parsed_current, s_parsed_current)
+                s_parsed += s_parsed_current
+                fontsize_prev = fontsize
+            s = s_parsed
+
         # print('\nEntered ###DRAW_TEXT###')
         # print('\t', self._groupd)
         # print('\t', gc.__dict__)
 
-        fontsize = self.points_to_pixels(prop.get_size_in_points())
+        # fontsize = self.points_to_pixels(prop.get_size_in_points()) original
+        fontsize = prop.get_size_in_points()
         dxfcolor = rgb_to_dxf(gc.get_rgb())
 
-        s=s.replace(u"\u2212", "-")
+        s = s.replace(u"\u2212", "-")
         s.encode('ascii', 'ignore').decode()
         text = self.modelspace.add_text(s, height=fontsize, rotation=angle, dxfattribs={
             'color': dxfcolor,
+            'style': 'Arial',
         })
 
-        halign = self._map_align(mtext.get_ha(), vert=False)
-        valign = self._map_align(mtext.get_va(), vert=True)
-        align = valign
-        if align:
-            align += '_'
-        align += halign
+        if mtext and (angle != 90 or mtext.get_rotation_mode() == "anchor"):
+            halign = self._map_align(mtext.get_ha(), vert=False)
+            valign = self._map_align(mtext.get_va(), vert=True)
+            align = valign
+            if align:
+                align += '_'
+            align += halign
+            # need to get original points for text anchoring
+            pos = mtext.get_unitless_position()
+            x, y = mtext.get_transform().transform(pos)
+        else:
+            align = 'LEFT'
 
-        # need to get original points for text anchoring
-        pos = mtext.get_unitless_position()
-        x, y = mtext.get_transform().transform(pos)
+        align = getattr(TextEntityAlignment, align)
 
         p1 = x, y
-        text.set_pos(p1, align=align)
+        text.set_placement(p1, align=align)
         # print('Left ###TEXT###')
 
     def _map_align(self, align, vert=False):
@@ -333,7 +366,7 @@ class RendererDxf(RendererBase):
         return points / 72.0 * self.dpi
 
 
-class FigureCanvasDxf(FigureCanvasBase):
+class FigureCanvasDXF(FigureCanvasBase):
     """
     A canvas to use the renderer. This only implements enough of the
     API to allow the export of DXF to file.
@@ -358,8 +391,8 @@ class FigureCanvasDxf(FigureCanvasBase):
             need_new_renderer = (self._lastKey != key)
 
         if need_new_renderer:
-            self.dxf_renderer = RendererDxf(w, h, self.figure.dpi,
-                                              self.DXFVERSION)
+            self.dxf_renderer = RendererDXF(w, h, self.figure.dpi,
+                                            self.DXFVERSION)
             self._lastKey = key
         elif cleared:
             self.dxf_renderer.clear()
@@ -387,11 +420,7 @@ class FigureCanvasDxf(FigureCanvasBase):
         return 'dxf'
 
 
-########################################################################
-#
-# Now just provide the standard names that backend.__init__ is expecting
-#
-########################################################################
-
-FigureCanvas = FigureCanvasDxf
-FigureManagerDXF = FigureManagerBase
+@_Backend.export
+class _BackendDXF(_Backend):
+    FigureCanvas = FigureCanvasDXF
+    FigureManagerDXF = FigureManagerBase
