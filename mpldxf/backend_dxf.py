@@ -40,18 +40,24 @@ from __future__ import (absolute_import, division, print_function,
 import math
 import os
 import sys
+from fractions import Fraction
+from itertools import pairwise
 
 import ezdxf
 import ezdxf.math.clipping
+import matplotlib as mpl
 import numpy as np
 from ezdxf.enums import TextEntityAlignment
 from matplotlib.backend_bases import (RendererBase, FigureCanvasBase,
                                       GraphicsContextBase, FigureManagerBase)
 from matplotlib.backend_bases import _Backend
 from matplotlib.transforms import Affine2D
+from scipy.special import cosdg, tandg
 from shapely.geometry import LineString, Polygon
 
-from . import dxf_colors
+from mpldxf.HatchMaker import hatchmaker, hatchmaker_single, rotate, get_angle, data_to_string
+from mpldxf.HatchMakerSSIO import hatchmaker as hatchmakerSSIO
+
 
 # When packaged with py2exe ezdxf has issues finding its templates
 # We tell it where to find them using this.
@@ -61,20 +67,54 @@ if hasattr(sys, 'frozen'):
     ezdxf.options.template_dir = os.path.dirname(sys.executable)
 
 
-def rgb_to_dxf(rgb_val):
+def get_color_attribs(rgb_val):
     """Convert an RGB[A] colour to DXF colour index.
 
        ``rgb_val`` should be a tuple of values in range 0.0 - 1.0. Any
        alpha value is ignored.
     """
+    attribs = {}
     if rgb_val is None:
-        dxfcolor = dxf_colors.WHITE
+        attribs['color'] = 7
     # change black to white
     elif np.allclose(np.array(rgb_val[:3]), np.zeros(3)):
-        dxfcolor = dxf_colors.nearest_index([255, 255, 255])
+        attribs['color'] = 7
     else:
-        dxfcolor = dxf_colors.nearest_index([255.0 * val for val in rgb_val[:3]])
-    return dxfcolor
+        attribs['true_color'] = ezdxf.rgb2int(
+            [255.0 * val for val in rgb_val[:3]]
+        )
+    return attribs
+
+
+# print(get_angle_offsets(np.deg2rad(72.121), round_precision=3))
+
+
+# get_angle_offsets_vec = np.vectorize(get_angle_offsets, otypes=[float, float, float], excluded=['round_precision'])
+#
+# import pandas as pd
+#
+# df = pd.read_excel('dxf hatch pattern templating/analyze mod.xlsx', skiprows=1, index_col=[0, 1])
+# # df = df.loc[['Pattycake.com']]
+# for i, r in df.iterrows():
+#     angle, d, dy = r['angle'], r['dash solid+gap'], r['dy']
+#     x_, y_, d_, dy_ = get_angle_offsets(angle, round_precision=3)
+#     print(angle, round(d / d_, 2), round(dy / dy_, 2))
+#
+# angles = np.arange(0, 360.5, 0.5)
+# dx, dy, d = get_angle_offsets_vec(angles, round_precision=3)
+# vs = dy
+# import matplotlib.pyplot as plt
+#
+# plt.plot(angles, vs)
+# plt.show()
+
+# print(get_hatch_pattern_args_inprogress((0, 0), (0, -1)))
+
+# print(get_hatch_pattern_args_inprogress((0, 0), (0, -1), dxf_mode=True))
+# args = get_hatch_pattern_args_inprogress([1, 1], [1 + 0.0866, 1 + 0.05], sidelength=2)
+# args_PAT_format = ','.join(
+#     [str(x) if not isinstance(x, (list, tuple)) else ','.join([str(y) for y in x]) for x in args.values()])
+# print(args_PAT_format)
 
 
 class RendererDXF(RendererBase):
@@ -103,6 +143,18 @@ class RendererDXF(RendererBase):
         drawing.header['$EXTMIN'] = (0, 0, 0)
         drawing.header['$EXTMAX'] = (self.width, self.height, 0)
         drawing.header["$LWDISPLAY"] = 1
+        layout = drawing.layout('Layout1')
+        paper_size_mm = (self.width / 100 * 25.4, self.height / 100 * 25.4)
+        layout.page_setup(
+            size=paper_size_mm,
+            margins=(0, 0, 0, 0),
+        )
+        layout.add_viewport(
+            center=(paper_size_mm[0] * 0.5, paper_size_mm[1] * 0.5),
+            size=paper_size_mm,
+            view_center_point=(self.width * 0.5, self.height * 0.5),
+            view_height=self.height,
+        )
         self.drawing = drawing
         self.modelspace = modelspace
 
@@ -112,13 +164,29 @@ class RendererDXF(RendererBase):
         self._init_drawing()
 
     def _get_polyline_attribs(self, gc):
-        attribs = {}
+        attribs = {**get_color_attribs(gc.get_rgb())}
         offset, seq = gc.get_dashes()
         if seq is not None:
-            attribs['linetype'] = 'DASHED'
-        attribs['color'] = rgb_to_dxf(gc.get_rgb())
+            # print(offset, seq)
+            # attribs['linetype'] = 'DASHED'
+            name = str(np.array(seq).round(2))
+            if name not in self.drawing.linetypes:
+                pattern = [sum(seq), *[-s if si % 2 else s for si, s in enumerate(seq)]]
+                # print(pattern)
+                # pattern = [0.2, 0.0, -0.2]
+                self.drawing.linetypes.add(
+                    name=name,
+                    pattern=pattern,
+                    description=name,
+                )
+            attribs['linetype'] = name
         attribs['lineweight'] = self.points_to_pixels(gc.get_linewidth()) * 10 * 2
         return attribs
+
+    def set_entity_attribs(self, gc, entity):
+        alpha = gc.get_alpha() if gc.get_forced_alpha() else gc.get_rgb()[3]
+        if alpha != 1:  # is alpha != 0 correct for all cases?
+            entity.transparency = 1 - alpha
 
     def _clip_mpl(self, gc, vertices, obj):
         # clip the polygon if clip rectangle present
@@ -140,15 +208,19 @@ class RendererDXF(RendererBase):
 
     def _draw_mpl_lwpoly(self, gc, path, transform, obj):
         # TODO rework for BEZIER curves
-        if obj in ['patch', 'QuadMesh', 'Poly3DCollection']:
-            close = True
-        elif obj in ['line2d', 'LineCollection', 'Line3DCollection', 'PathCollection']:
-            close = False
-        else:
-            raise NotImplementedError
+        # if obj in ['patch', 'QuadMesh', 'Poly3DCollection']:
+        #     close = True
+        # elif obj in ['line2d', 'LineCollection', 'Line3DCollection', 'PathCollection']:
+        #     close = False
+        # else:
+        #     raise NotImplementedError
 
         dxfattribs = self._get_polyline_attribs(gc)
         vertices = path.transformed(transform).vertices
+        if obj in ['patch'] or vertices.size != 0 and (vertices[0] == vertices[-1]).all():
+            close = True
+        else:
+            close = False
 
         # clip the polygon if clip rectangle present
         vertices = self._clip_mpl(gc, vertices, obj=obj)
@@ -156,6 +228,7 @@ class RendererDXF(RendererBase):
         entity = self.modelspace.add_lwpolyline(points=vertices,
                                                 close=close,
                                                 dxfattribs=dxfattribs)
+        self.set_entity_attribs(gc, entity)
         return entity
 
     def _draw_mpl_patch(self, gc, path, transform, rgbFace=None, obj=None):
@@ -166,7 +239,68 @@ class RendererDXF(RendererBase):
 
         # check to see if the patch is filled
         if rgbFace is not None:
-            hatch = self.modelspace.add_hatch(color=rgb_to_dxf(rgbFace))
+            hatch = self.modelspace.add_hatch(dxfattribs=get_color_attribs(rgbFace))  # dxfattribs=get_color_attribs(rgbFace)
+            self.set_entity_attribs(gc, hatch)
+            def method1():
+                hpath = gc.get_hatch_path()
+                sidelen = 1
+                if hpath is not None:
+                    patterns = []
+                    hpath_unit = mpl.hatch.get_path(gc._hatch)  # , density=6 might need some clipping
+
+                    polys = hpath_unit.to_polygons(closed_only=False)
+                    # print(len(polys))
+                    # print(len(hpath_unit.vertices))
+                    import matplotlib.pyplot as plt
+                    fig, ax = plt.subplots()
+                    for poly_ in polys:
+                        # poly_ *= sidelen
+                        # if (poly_ > sidelen).any() or (poly_ < 0).any():
+                        #     continue
+                        for p0, p1 in pairwise(poly_):
+                            pattern = hatchmakerSSIO(p0, p1, dxf_mode=True, return_as_string=False)
+                            patterns.append(pattern)
+                            # else:
+                            #     # pass
+                            #     print(p0, p1)
+                            #     # sdfgdfgdfg
+                            # p0 = np.round(p0, 3)
+                            # p1 = np.round(p1, 3)
+                            # pattern_args = get_hatch_pattern_args_inprogress(p0, p1, sidelength=sidelen, dxf_mode=True)
+                            #
+                            # pattern_args = hatchmaker_single(p0, p1, dxf_mode=True, return_as_data=True)
+                            # # print(get_hatch_pattern_args_inprogress(p0, p1, dxf_mode=False, return_as_string=True))
+                            # strcat = hatchmaker_single(p0, p1)
+                            # if strcat is not None:
+                            #     print(strcat)
+                            # else:
+                            #     print('AAAAAAAAAAAAAAAAAAAA')
+                            # # print(','.join(
+                            # #     [','.join([str(x_) for x_ in x]) if isinstance(x, (np.ndarray, list, tuple)) else str(x) for
+                            # #      x in pattern_args.values()]))
+                            # # print(pattern_args)
+                            #
+                            # pattern.append([*pattern_args.values()])
+                        x_ = poly_[:, 0]
+                        y_ = poly_[:, 1]
+                        ax.plot(x_, y_)
+                    # print(hatchmaker(p0, p1, dxf_mode=False, return_as_data=False))
+                    # pattern.extend(pattern_)
+
+                    fig.savefig('temp/temp.pdf')
+                    patterns = [list(d.values()) for d in patterns]
+                    hatch.set_pattern_fill(
+                        name=f'mpl_{gc._hatch}',
+                        style=1,
+                        pattern_type=1,
+                        scale=100,
+                        definition=patterns,
+                    )
+
+            def method2():
+                self._draw_mpl_hatch(gc, path, transform, pline=poly)
+
+            method1()
             hpath = hatch.paths.add_polyline_path(
                 # get path vertices from associated LWPOLYLINE entity
                 poly.get_points(format="xyb"),
@@ -175,8 +309,6 @@ class RendererDXF(RendererBase):
 
             # Set association between boundary path and LWPOLYLINE
             hatch.associate(hpath, [poly])
-
-        self._draw_mpl_hatch(gc, path, transform, pline=poly)
 
     def _draw_mpl_hatch(self, gc, path, transform, pline):
         '''Draw MPL hatch
@@ -197,7 +329,7 @@ class RendererDXF(RendererBase):
 
             # get color of the hatch
             rgb = gc.get_hatch_color()
-            dxfcolor = rgb_to_dxf(rgb)
+            dxfattribs = get_color_attribs(rgb)
 
             # get hatch paths
             hpath = gc.get_hatch_path()
@@ -237,13 +369,14 @@ class RendererDXF(RendererBase):
                         # if there is something to plot
                         if len(clipped) > 0:
                             if len(vertices) == 2:
-                                attrs = {'color': dxfcolor}
-                                self.modelspace.add_lwpolyline(points=clipped,
-                                                               dxfattribs=attrs)
+                                entity = self.modelspace.add_lwpolyline(points=clipped,
+                                                                        dxfattribs=dxfattribs)
+
                             else:
                                 # A non-filled polygon or a line - use LWPOLYLINE entity
-                                hatch = self.modelspace.add_hatch(color=dxfcolor)
-                                line = hatch.paths.add_polyline_path(clipped)
+                                entity = self.modelspace.add_hatch(dxfattribs=dxfattribs)
+                                line = entity.paths.add_polyline_path(clipped)
+                            self.set_entity_attribs(gc, entity)
 
     def draw_path(self, gc, path, transform, rgbFace=None):
         # print('\nEntered ###DRAW_PATH###')
@@ -302,14 +435,14 @@ class RendererDXF(RendererBase):
 
         # fontsize = self.points_to_pixels(prop.get_size_in_points()) original
         fontsize = prop.get_size_in_points()
-        dxfcolor = rgb_to_dxf(gc.get_rgb())
 
-        s = s.replace(u"\u2212", "-")
+        # s = s.replace(u"\u2212", "-")
         s.encode('ascii', 'ignore').decode()
         text = self.modelspace.add_text(s, height=fontsize, rotation=angle, dxfattribs={
-            'color': dxfcolor,
+            **get_color_attribs(gc.get_rgb()),
             'style': 'Arial',
         })
+        self.set_entity_attribs(gc, text)
 
         if mtext and (angle != 90 or mtext.get_rotation_mode() == "anchor"):
             halign = self._map_align(mtext.get_ha(), vert=False)
