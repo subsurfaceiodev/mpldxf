@@ -25,11 +25,12 @@ data_ = data
 
 from collections import defaultdict
 data = {}
-name = 's601'
 df = pd.read_pickle(f'{data_path}/build_hatches.pickle')
-for (name, path_id), df_ in df.groupby(df.index):
+for (name, path_id), df_ in df.groupby(df.index, sort=False):
+    path_id_i = 0
     for (i0, r0), (i1, r1) in pairwise(df_.iterrows()):
-        data[(name, path_id)] = {'x0': r0['x'], 'y0': r0['y'], 'x1': r1['x'], 'y1': r1['y']}
+        data[(name, f'{path_id}.{path_id_i}')] = {'x0': r0['x'], 'y0': r0['y'], 'x1': r1['x'], 'y1': r1['y']}
+        path_id_i += 1
 data = pd.DataFrame.from_dict(data, orient='index')
 data.index.names = ['name', '#']
 data.reset_index(level=1, inplace=True)
