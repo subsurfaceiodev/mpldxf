@@ -50,7 +50,7 @@ from matplotlib.backend_bases import (RendererBase, FigureCanvasBase,
 from matplotlib.backend_bases import _Backend
 from matplotlib.transforms import Affine2D
 
-from mpldxf.HatchMakerSSIO import hatchmaker as hatchmakerSSIO
+from mpldxf.HatchMakerSSIO import hatchmaker as hatchmakerSSIO, clean_pat_title
 
 # When packaged with py2exe ezdxf has issues finding its templates
 # We tell it where to find them using this.
@@ -252,6 +252,11 @@ class RendererDXF(RendererBase):
         hpath = gc.get_hatch_path()
         if hpath is not None:
             hatch_name = gc.get_hatch()
+            if hatch_name == "'": return
+            patht = path.transformed(transform)
+            bbox = patht.get_extents()
+            if (bbox.y0 < 0 or bbox.y0 > self.height) or (bbox.y1 < 0 or bbox.y1 > self.height):
+                return
             if hatch_name not in self.patterns:
                 patterns = []
                 _transform = Affine2D().scale(self.dpi)
@@ -271,8 +276,9 @@ class RendererDXF(RendererBase):
                     'lineweight': self.points_to_pixels(gc.get_hatch_linewidth()) * 10 * 2}
             )
             self.set_entity_attribs(gc, hatch)
+            pat_title = clean_pat_title(gc.get_hatch())
             hatch.set_pattern_fill(
-                name=f'mpl_{gc.get_hatch()}',
+                name=f'mpl_{pat_title}',
                 scale=100 * 0.5,  # * 0.5 to match pdf modified hatch density
                 definition=patterns,
             )

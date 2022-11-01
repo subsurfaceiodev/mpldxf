@@ -4,6 +4,9 @@ import numpy as np
 
 from mpldxf.HatchMaker import get_angle, data_to_string, rotate
 
+def clean_pat_title(pat_title):
+    pat_title = pat_title.replace(' ', '')
+    return pat_title
 
 def get_multiplier(value):
     multiplier = Fraction(value).limit_denominator(max_denominator=100).denominator
