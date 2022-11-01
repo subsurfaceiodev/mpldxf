@@ -37,27 +37,20 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-import math
 import os
 import sys
-from fractions import Fraction
 from itertools import pairwise
 
 import ezdxf
 import ezdxf.math.clipping
-import matplotlib as mpl
 import numpy as np
 from ezdxf.enums import TextEntityAlignment
 from matplotlib.backend_bases import (RendererBase, FigureCanvasBase,
                                       GraphicsContextBase, FigureManagerBase)
 from matplotlib.backend_bases import _Backend
 from matplotlib.transforms import Affine2D
-from scipy.special import cosdg, tandg
-from shapely.geometry import LineString, Polygon
 
-from mpldxf.HatchMaker import hatchmaker, hatchmaker_single, rotate, get_angle, data_to_string
 from mpldxf.HatchMakerSSIO import hatchmaker as hatchmakerSSIO
-
 
 # When packaged with py2exe ezdxf has issues finding its templates
 # We tell it where to find them using this.
@@ -132,6 +125,7 @@ class RendererDXF(RendererBase):
         self.dxfversion = dxfversion
         self._init_drawing()
         self._groupd = []
+        self.patterns = {}
 
     def _init_drawing(self):
         """Create a drawing, set some global information and add
@@ -143,6 +137,7 @@ class RendererDXF(RendererBase):
         drawing.header['$EXTMIN'] = (0, 0, 0)
         drawing.header['$EXTMAX'] = (self.width, self.height, 0)
         drawing.header["$LWDISPLAY"] = 1
+        drawing.header['$PSLTSCALE'] = 0
         layout = drawing.layout('Layout1')
         paper_size_mm = (self.width / 100 * 25.4, self.height / 100 * 25.4)
         layout.page_setup(
@@ -170,8 +165,9 @@ class RendererDXF(RendererBase):
             # print(offset, seq)
             # attribs['linetype'] = 'DASHED'
             name = str(np.array(seq).round(2))
+            FACTOR = self.points_to_pixels(1)
             if name not in self.drawing.linetypes:
-                pattern = [sum(seq), *[-s if si % 2 else s for si, s in enumerate(seq)]]
+                pattern = [sum(seq) * FACTOR, *[FACTOR * (-s if si % 2 else s) for si, s in enumerate(seq)]]
                 # print(pattern)
                 # pattern = [0.2, 0.0, -0.2]
                 self.drawing.linetypes.add(
@@ -184,9 +180,14 @@ class RendererDXF(RendererBase):
         return attribs
 
     def set_entity_attribs(self, gc, entity):
-        alpha = gc.get_alpha() if gc.get_forced_alpha() else gc.get_rgb()[3]
-        if alpha != 1:  # is alpha != 0 correct for all cases?
-            entity.transparency = 1 - alpha
+        if gc.get_forced_alpha():
+            alpha = gc.get_alpha()
+            if alpha != 1:
+                entity.transparency = 1 - alpha
+        else:
+            alpha = gc.get_rgb()[3]
+            if alpha != 0 and alpha != 1:
+                entity.transparency = 1 - alpha
 
     def _clip_mpl(self, gc, vertices, obj):
         # clip the polygon if clip rectangle present
@@ -239,144 +240,48 @@ class RendererDXF(RendererBase):
 
         # check to see if the patch is filled
         if rgbFace is not None:
-            hatch = self.modelspace.add_hatch(dxfattribs=get_color_attribs(rgbFace))  # dxfattribs=get_color_attribs(rgbFace)
+            hatch = self.modelspace.add_hatch(
+                dxfattribs=get_color_attribs(rgbFace)
+            )
             self.set_entity_attribs(gc, hatch)
-            def method1():
-                hpath = gc.get_hatch_path()
-                sidelen = 1
-                if hpath is not None:
-                    patterns = []
-                    hpath_unit = mpl.hatch.get_path(gc._hatch)  # , density=6 might need some clipping
 
-                    polys = hpath_unit.to_polygons(closed_only=False)
-                    # print(len(polys))
-                    # print(len(hpath_unit.vertices))
-                    import matplotlib.pyplot as plt
-                    fig, ax = plt.subplots()
-                    for poly_ in polys:
-                        # poly_ *= sidelen
-                        # if (poly_ > sidelen).any() or (poly_ < 0).any():
-                        #     continue
-                        for p0, p1 in pairwise(poly_):
-                            pattern = hatchmakerSSIO(p0, p1, dxf_mode=True, return_as_string=False)
-                            patterns.append(pattern)
-                            # else:
-                            #     # pass
-                            #     print(p0, p1)
-                            #     # sdfgdfgdfg
-                            # p0 = np.round(p0, 3)
-                            # p1 = np.round(p1, 3)
-                            # pattern_args = get_hatch_pattern_args_inprogress(p0, p1, sidelength=sidelen, dxf_mode=True)
-                            #
-                            # pattern_args = hatchmaker_single(p0, p1, dxf_mode=True, return_as_data=True)
-                            # # print(get_hatch_pattern_args_inprogress(p0, p1, dxf_mode=False, return_as_string=True))
-                            # strcat = hatchmaker_single(p0, p1)
-                            # if strcat is not None:
-                            #     print(strcat)
-                            # else:
-                            #     print('AAAAAAAAAAAAAAAAAAAA')
-                            # # print(','.join(
-                            # #     [','.join([str(x_) for x_ in x]) if isinstance(x, (np.ndarray, list, tuple)) else str(x) for
-                            # #      x in pattern_args.values()]))
-                            # # print(pattern_args)
-                            #
-                            # pattern.append([*pattern_args.values()])
-                        x_ = poly_[:, 0]
-                        y_ = poly_[:, 1]
-                        ax.plot(x_, y_)
-                    # print(hatchmaker(p0, p1, dxf_mode=False, return_as_data=False))
-                    # pattern.extend(pattern_)
-
-                    fig.savefig('temp/temp.pdf')
-                    patterns = [list(d.values()) for d in patterns]
-                    hatch.set_pattern_fill(
-                        name=f'mpl_{gc._hatch}',
-                        style=1,
-                        pattern_type=1,
-                        scale=100,
-                        definition=patterns,
-                    )
-
-            def method2():
-                self._draw_mpl_hatch(gc, path, transform, pline=poly)
-
-            method1()
             hpath = hatch.paths.add_polyline_path(
+                poly.get_points(format="xyb"),
+                is_closed=poly.closed)
+            hatch.associate(hpath, [poly])
+        hpath = gc.get_hatch_path()
+        if hpath is not None:
+            hatch_name = gc.get_hatch()
+            if hatch_name not in self.patterns:
+                patterns = []
+                _transform = Affine2D().scale(self.dpi)
+                hpatht = hpath.transformed(_transform)  # needs clipping
+                _path = hpatht.to_polygons(closed_only=False, width=100, height=100)
+                for vertices in _path:
+                    vertices *= 0.01
+                    for p0, p1 in pairwise(vertices):
+                        pattern = hatchmakerSSIO(p0, p1, dxf_mode=True, return_as_string=False)
+                        patterns.append(pattern)
+                patterns = [list(d.values()) for d in patterns]
+                self.patterns[hatch_name] = patterns
+            else:
+                patterns = self.patterns[hatch_name]
+            hatch = self.modelspace.add_hatch(
+                dxfattribs=get_color_attribs(gc.get_hatch_color()) | {
+                    'lineweight': self.points_to_pixels(gc.get_hatch_linewidth()) * 10 * 2}
+            )
+            self.set_entity_attribs(gc, hatch)
+            hatch.set_pattern_fill(
+                name=f'mpl_{gc.get_hatch()}',
+                scale=100 * 0.5,  # * 0.5 to match pdf modified hatch density
+                definition=patterns,
+            )
+            hpath_ = hatch.paths.add_polyline_path(
                 # get path vertices from associated LWPOLYLINE entity
                 poly.get_points(format="xyb"),
                 # get closed state also from associated LWPOLYLINE entity
                 is_closed=poly.closed)
-
-            # Set association between boundary path and LWPOLYLINE
-            hatch.associate(hpath, [poly])
-
-    def _draw_mpl_hatch(self, gc, path, transform, pline):
-        '''Draw MPL hatch
-        '''
-
-        hatch = gc.get_hatch()
-        if hatch is not None:
-            # find extents and center of the original unclipped parent path
-            ext = path.get_extents(transform=transform)
-            dx = ext.x1 - ext.x0
-            cx = 0.5 * (ext.x1 + ext.x0)
-            dy = ext.y1 - ext.y0
-            cy = 0.5 * (ext.y1 + ext.y0)
-
-            # matplotlib uses a 1-inch square hatch, so find out how many rows
-            # and columns will be needed to fill the parent path
-            rows, cols = math.ceil(dy / self.dpi) - 1, math.ceil(dx / self.dpi) - 1
-
-            # get color of the hatch
-            rgb = gc.get_hatch_color()
-            dxfattribs = get_color_attribs(rgb)
-
-            # get hatch paths
-            hpath = gc.get_hatch_path()
-
-            # this is a transform that produces a properly scaled hatch in the center
-            # of the parent hatch
-            _transform = Affine2D().translate(-0.5, -0.5).scale(self.dpi).translate(cx, cy)
-            hpatht = hpath.transformed(_transform)
-
-            # print("\tHatch Path:", hpatht)
-            # now place the hatch to cover the parent path
-            for irow in range(-rows, rows + 1):
-                for icol in range(-cols, cols + 1):
-                    # transformation from the center of the parent path
-                    _trans = Affine2D().translate(icol * self.dpi, irow * self.dpi)
-                    # transformed hatch
-                    _hpath = hpatht.transformed(_trans)
-
-                    # turn into list of vertices to make up polygon
-                    _path = _hpath.to_polygons(closed_only=False)
-
-                    for vertices in _path:
-                        # clip each set to the parent path
-                        if len(vertices) == 2:
-                            clippoly = Polygon(pline.vertices())
-                            line = LineString(vertices)
-                            try:
-                                clipped = line.intersection(clippoly).coords
-                            except NotImplementedError:
-                                continue  # PENDING TO FIX WHEN SAVING LOGPLOT
-                        else:
-                            try:
-                                clipped = ezdxf.math.clipping.clip_polygon_2d(pline.vertices(), vertices)
-                            except ValueError:
-                                continue  # PENDING TO FIX WHEN SAVING LOGPLOT
-
-                        # if there is something to plot
-                        if len(clipped) > 0:
-                            if len(vertices) == 2:
-                                entity = self.modelspace.add_lwpolyline(points=clipped,
-                                                                        dxfattribs=dxfattribs)
-
-                            else:
-                                # A non-filled polygon or a line - use LWPOLYLINE entity
-                                entity = self.modelspace.add_hatch(dxfattribs=dxfattribs)
-                                line = entity.paths.add_polyline_path(clipped)
-                            self.set_entity_attribs(gc, entity)
+            hatch.associate(hpath_, [poly])
 
     def draw_path(self, gc, path, transform, rgbFace=None):
         # print('\nEntered ###DRAW_PATH###')

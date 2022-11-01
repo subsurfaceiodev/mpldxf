@@ -1,11 +1,15 @@
-import numpy as np
 from fractions import Fraction
-from scipy.special import tandg
+
+import numpy as np
+
 from mpldxf.HatchMaker import get_angle, data_to_string, rotate
+
 
 def get_multiplier(value):
     multiplier = Fraction(value).limit_denominator(max_denominator=100).denominator
     return multiplier
+
+
 # print(get_multiplier(1/tandg(30)))
 # dfgdgh
 def get_angle_offsets(angle, round_precision=3):
@@ -127,7 +131,7 @@ def hatchmaker(p0, p1, dxf_mode=False, return_as_string=False, points_round_prec
 
 def test1():
     angle_ = 45 * 2
-    angles = np.arange(angle_, angle_+90.5, 0.5)
+    angles = np.arange(angle_, angle_ + 90.5, 0.5)
     # angle_ = 30
     # angles = [angle_, 180-angle_]
     pt1 = (0, 0)
@@ -136,7 +140,6 @@ def test1():
         pt2 = (0.1 * np.cos(angle_rad), 0.1 * np.sin(angle_rad))
         returned = hatchmaker(pt1, pt2, return_as_string=True)
         print(returned)
-
 
 # test1()
 # pt1 = [(0, 0), (0, 0), (0, 0)]
