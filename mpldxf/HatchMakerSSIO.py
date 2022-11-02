@@ -1,12 +1,55 @@
 from fractions import Fraction
 
 import numpy as np
+from softwaresolutions.common.functions import str_replace_from_map
 
 from mpldxf.HatchMaker import get_angle, data_to_string, rotate
 
-def clean_pat_title(pat_title):
-    pat_title = pat_title.replace(' ', '')
+SPECIAL_CHARACTERS_MAP = {
+    # https://www.mtu.edu/umc/services/websites/writing/characters-avoid/
+    '/': 'FS',
+    '\\': 'BS',
+    '|': 'VS',
+    '!': 'EX',
+    '¡': 'ED',
+    '?': 'QM',
+    '@': 'AT',
+    '#': 'NU',
+    '%': 'PC',
+    '&': 'AM',
+    '<': 'LT',
+    '>': 'GT',
+    ':': 'CO',
+    '"': 'DQ',
+    "'": 'SQ',
+    '¨': 'DI',
+    '.': 'DT',
+    '*': 'AS',
+    '+': 'PL',
+    '`': 'BT',
+    '´': 'FT',
+    '(': 'LP',
+    ')': 'RP',
+    '[': 'LB',
+    ']': 'RB',
+    '{': 'LC',
+    '}': 'RC',
+    '=': 'EQ',
+    ',': 'CM',
+    ';': 'SC',
+    ' ': '',
+}
+
+
+def clean_pat_title(pat_title, software='AutoCAD', specials_as_name=True):
+    if software == 'AutoCAD':
+        if specials_as_name:
+            MAP = SPECIAL_CHARACTERS_MAP
+        else:
+            MAP = {k: '' for k in SPECIAL_CHARACTERS_MAP}
+        pat_title = str_replace_from_map(pat_title, map=MAP, mode='any')
     return pat_title
+
 
 def get_multiplier(value):
     multiplier = Fraction(value).limit_denominator(max_denominator=100).denominator
