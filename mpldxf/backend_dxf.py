@@ -41,6 +41,7 @@ import math
 import os
 import sys
 from itertools import pairwise
+import warnings
 
 import ezdxf
 import ezdxf.math.clipping
@@ -63,6 +64,9 @@ from mpldxf.HatchMakerSSIO import hatchmaker as hatchmakerSSIO, clean_pat_title
 if hasattr(sys, 'frozen'):
     ezdxf.options.template_dir = os.path.dirname(sys.executable)
 
+warnings.filterwarnings('ignore', 'invalid value encountered in contains')
+warnings.filterwarnings('ignore', 'invalid value encountered in intersects')
+warnings.filterwarnings('ignore', 'invalid value encountered in intersection')
 
 def get_color_attribs(rgb_val):
     """Convert an RGB[A] colour to DXF colour index.
@@ -196,78 +200,67 @@ class RendererDXF(RendererBase):
             if alpha != 0 and alpha != 1:
                 entity.transparency = 1 - alpha
 
-    def _clip_mpl(self, gc, vertices, obj):
+    def _clip_mpl(self, vertices, clippoly):
         # clip the polygon if clip rectangle present
-        bbox = gc.get_clip_rectangle()
-        if bbox is not None:
-            if len(vertices) < 2:
-                return vertices
-            shape = LineString(vertices).intersection(box(bbox.x0, bbox.y0, bbox.x1, bbox.y1))
-            if shape.geom_type == 'MultiLineString':
-                shape = linemerge(shape)
-            if shape.geom_type == 'MultiLineString':
-                # this section is not ideal, seems to be needed only for discontinued lines
-                # def merge_lines(lines):
-                #     last = None
-                #     points = []
-                #     for line in lines:
-                #         current = line.coords[0]
-                #
-                #         if last is None:
-                #             points.extend(line.coords)
-                #         else:
-                #             if last == current:
-                #                 points.extend(line.coords[1:])
-                #             else:
-                #                 print('Skipping to merge {} {}'.format(last, current))
-                #                 return None
-                #         last = line.coords[-1]
-                #     return LineString(points)
-                # shape = merge_lines(list(shape.geoms))
-                # if shape is None:
-                #     return []
-                cliprect = [[bbox.x0, bbox.y0],
-                            [bbox.x1, bbox.y0],
-                            [bbox.x1, bbox.y1],
-                            [bbox.x0, bbox.y1]]
-                vertices = ezdxf.math.clipping.clip_polygon_2d(cliprect, vertices)
-                vertices = np.array([list(v) for v in vertices])
-                return vertices
-            vertices = np.array(list(zip(*shape.coords.xy)))
+        if len(vertices) < 2:
+            return vertices # or None?
+        # vertices_is_closed = np.array_equal(vertices[0], vertices[-1])
+        # if vertices_is_closed:
+        #     shape = Polygon(vertices)
+        #     if not shape.is_valid:
+        #         return None
+        # else:
+        shape = LineString(vertices)
+        if not shape.is_simple:
+            # when shape crosses itself intersection throws intersection warning and
+            # .coords attribute error, current heuristic approach is to simply not
+            # clip these vertices
+            return vertices
+        shape = shape.intersection(clippoly)
+        if shape.geom_type == 'MultiLineString':
+            shape = linemerge(shape)
+        vertices = np.array(list(zip(*shape.coords.xy)))
         return vertices
 
     def _draw_mpl_lwpoly(self, gc, path, transform, obj):
-        # TODO rework for BEZIER curves
-        # if obj in ['patch', 'QuadMesh', 'Poly3DCollection']:
-        #     close = True
-        # elif obj in ['line2d', 'LineCollection', 'Line3DCollection', 'PathCollection']:
-        #     close = False
-        # else:
-        #     raise NotImplementedError
-
         dxfattribs = self._get_polyline_attribs(gc)
-        vertices = path.transformed(transform).vertices
-        if obj in ['patch'] or vertices.size != 0 and (vertices[0] == vertices[-1]).all():
-            close = True
-        else:
-            close = False
+        # vertices = path.transformed(transform).vertices
 
-        if len(vertices) > 0:
-            # to prevent errors with discontinuous lines
-            vertices = vertices[~np.isnan(vertices).any(axis=1)]
-        # clip the polygon if clip rectangle present
-        vertices = self._clip_mpl(gc, vertices, obj=obj)
-        entity = self.modelspace.add_lwpolyline(points=vertices,
-                                                close=close,
-                                                dxfattribs=dxfattribs)
-        self.set_entity_attribs(gc, entity)
+        for vertices in path.to_polygons(closed_only=False):
+            vertices = vertices[(vertices != np.array([0, 0])).all(axis=1)]
+            close = len(vertices) > 1 and np.array_equal(vertices[0], vertices[-1])
+            entity = self.modelspace.add_lwpolyline(points=vertices,
+                                                    close=close,
+                                                    dxfattribs=dxfattribs)
+            self.set_entity_attribs(gc, entity)
+        return None
+        # vertices = path.vertices
+        # if len(vertices) > 1 and np.array_equal(vertices[0], vertices[-1]):
+        #     close = True
+        # else:
+        #     close = False
+        #
+        # if len(vertices) > 0:
+        #     # to prevent errors with discontinuous lines
+        #     vertices = vertices[~np.isnan(vertices).any(axis=1)]
+        # # clip the polygon if clip rectangle present
+        # bbox = gc.get_clip_rectangle()
+        # if bbox is not None:
+        #     clippoly = box(bbox.x0, bbox.y0, bbox.x1, bbox.y1)
+        #     vertices = self._clip_mpl(vertices, clippoly)
+        # entity = self.modelspace.add_lwpolyline(points=vertices,
+        #                                         close=close,
+        #                                         dxfattribs=dxfattribs)
+        # self.set_entity_attribs(gc, entity)
         return entity
 
     def _draw_mpl_patch(self, gc, path, transform, rgbFace=None, obj=None):
         '''Draw a matplotlib patch object
         '''
-
+        path = path.cleaned(transform=transform, remove_nans=True, clip=gc.get_clip_rectangle(), simplify=True)
+        # print(path)
         poly = self._draw_mpl_lwpoly(gc, path, transform, obj=obj)
+        return
         # check to see if the patch is filled
 
         if rgbFace is not None:
@@ -403,10 +396,18 @@ class RendererDXF(RendererBase):
                             shape = Polygon(vertices)
                         else:
                             shape = LineString(vertices)
-                        try:
-                            shape = shape.intersection(clippoly)
-                        except GEOSException:
+                        if not shape.is_valid:
                             continue
+                        if not clippoly.contains(shape) and not clippoly.intersects(shape):
+                            # ignore shape when shape is completely outside clippoly,
+                            # prevents intersection invalid warning
+                            continue
+                        if shape.is_simple:
+                            try:
+                                shape = shape.intersection(clippoly)
+                            except GEOSException as e:
+                                raise e
+                                continue
                         if shape.geom_type in ['Polygon', 'LineString']:
                             draw(shape)
                         elif shape.geom_type == 'MultiPolygon':
