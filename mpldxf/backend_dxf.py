@@ -37,19 +37,17 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-import inspect
 import logging
 import math
 import os
 import sys
 import warnings
-from glob import glob
-from fontTools.ttLib import TTFont
+
 import ezdxf
 import ezdxf.math.clipping
-import matplotlib
 import numpy as np
 from ezdxf.enums import TextEntityAlignment
+from fontTools.ttLib import TTFont
 from matplotlib import font_manager
 from matplotlib.backend_bases import (RendererBase, FigureCanvasBase,
                                       GraphicsContextBase, FigureManagerBase)
@@ -77,7 +75,8 @@ for ttf_path in font_manager.findSystemFonts(fontpaths=None, fontext='ttf'):
 # TODO: Multiline text like in logplot not breaking lines correctly.
 #       shapely filterwarnings should not be needed now?.
 #       use _log for better future code debugging
-#       linestyles test not displaying some lines correctly
+#       linestyles test not displaying some lines correctly (DONE)
+#       acad.ctb (for correct square linetypes) and plot transparency as defaults in layout
 
 # When packaged with py2exe ezdxf has issues finding its templates
 # We tell it where to find them using this.
@@ -184,6 +183,7 @@ class RendererDXF(RendererBase):
         drawing.header['$EXTMAX'] = (self.width, self.height, 0)
         drawing.header["$LWDISPLAY"] = 1
         drawing.header['$PSLTSCALE'] = 0
+        drawing.header['$PLINEGEN'] = 1
         HIDDEN_LAYER = drawing.layers.add('HIDDEN')
         HIDDEN_LAYER.off()
         layout = drawing.layout('Layout1')
@@ -212,12 +212,13 @@ class RendererDXF(RendererBase):
         gc._hatch_lineweight = self.points_to_pixels(gc.get_hatch_linewidth()) * LINEWIDTH_FACTOR
 
         gc._linetype = None
-        offset, seq = gc.get_dashes()
+        offset, seq = gc.get_dashes()  # offset not considered
         if seq is not None:
-            name = str(np.array(seq).round(2))
+            FACTOR = self.points_to_pixels(1)
+            pattern_pattern = np.array([FACTOR * (-s if si % 2 else s) for si, s in enumerate(seq)])
+            name = str(pattern_pattern.round(2))
             if name not in self.drawing.linetypes:
-                FACTOR = self.points_to_pixels(1)
-                pattern = [sum(seq) * FACTOR, *[FACTOR * (-s if si % 2 else s) for si, s in enumerate(seq)]]
+                pattern = [np.sum(pattern_pattern, where=pattern_pattern > 0), *pattern_pattern]
                 self.drawing.linetypes.add(
                     name=name,
                     pattern=pattern,
@@ -314,6 +315,7 @@ class RendererDXF(RendererBase):
             poly = self.modelspace.add_lwpolyline(points=vertices,
                                                   close=close,
                                                   dxfattribs=dxfattribs)
+            poly.set_flag_state(128, True)
             self.set_entity_attribs(gc, poly)
 
             if rgbFace is not None:
@@ -398,6 +400,7 @@ class RendererDXF(RendererBase):
                                                                 dxfattribs=get_color_attribs(rgb) | {
                                                                     'lineweight': gc._hatch_lineweight}
                                                                 )
+                        entity.set_flag_state(128, True)
                     if group_data is not None:
                         group_data.append(entity)
 
@@ -488,7 +491,8 @@ class RendererDXF(RendererBase):
         # print(prop.__dict__)
         # print(dir(prop))
         # print(s)
-        props = ['get_family', 'get_file', 'get_fontconfig_pattern', 'get_math_fontfamily', 'get_name', 'get_size', 'get_size_in_points', 'get_slant', 'get_stretch', 'get_style', 'get_variant', 'get_weight']
+        props = ['get_family', 'get_file', 'get_fontconfig_pattern', 'get_math_fontfamily', 'get_name', 'get_size',
+                 'get_size_in_points', 'get_slant', 'get_stretch', 'get_style', 'get_variant', 'get_weight']
         # for prop_ in props:
         #     print(prop_, getattr(prop, prop_)())
         # print(s)
