@@ -40,7 +40,6 @@ from __future__ import (absolute_import, division, print_function,
 import math
 import os
 import sys
-from itertools import pairwise
 import warnings
 
 import ezdxf
@@ -55,7 +54,8 @@ from shapely.errors import GEOSException
 from shapely.geometry import box, LineString, Polygon
 from shapely.ops import linemerge
 
-from mpldxf.HatchMakerSSIO import hatchmaker as hatchmakerSSIO, clean_pat_title
+# TODO: Multiline text like in logplot not breaking lines correctly.
+#       shapely filterwarnings should not be needed now?.
 
 # When packaged with py2exe ezdxf has issues finding its templates
 # We tell it where to find them using this.
@@ -67,6 +67,7 @@ if hasattr(sys, 'frozen'):
 warnings.filterwarnings('ignore', 'invalid value encountered in contains')
 warnings.filterwarnings('ignore', 'invalid value encountered in intersects')
 warnings.filterwarnings('ignore', 'invalid value encountered in intersection')
+
 
 def get_color_attribs(rgb_val):
     """Convert an RGB[A] colour to DXF colour index.
@@ -82,13 +83,22 @@ def get_color_attribs(rgb_val):
         attribs['color'] = 7
     else:
         attribs['true_color'] = ezdxf.rgb2int(
-            [255.0 * val for val in rgb_val[:3]]
+            255 * np.array(rgb_val[:3])
         )
     return attribs
 
 
 HATCH_SCALE_FACTOR = 0.5  # * 0.5 to match pdf modified hatch density
 HATCH_LINES_DRAW_AS_PAT = False
+# https://stackoverflow.com/questions/47633546/relationship-between-dpi-and-figure-size
+# 1 / 72 to convert points to inches
+# 25.4 to convert inches to mm
+# 100 to get value in mm times 100 as dxf requirement
+# 1 / 72 * 100 is already covered by points_to_pixels functions
+# so only 25.4 is left
+# note that ezdxf automatically chooses nearest line width from limited set
+# of dxf values available, so in some cases line widths won't be exact
+LINEWIDTH_FACTOR = 25.4
 
 
 # print(get_angle_offsets(np.deg2rad(72.121), round_precision=3))
@@ -149,6 +159,8 @@ class RendererDXF(RendererBase):
         drawing.header['$EXTMAX'] = (self.width, self.height, 0)
         drawing.header["$LWDISPLAY"] = 1
         drawing.header['$PSLTSCALE'] = 0
+        HIDDEN_LAYER = drawing.layers.add('HIDDEN')
+        HIDDEN_LAYER.off()
         layout = drawing.layout('Layout1')
         paper_size_mm = (self.width / 100 * 25.4, self.height / 100 * 25.4)
         layout.page_setup(
@@ -160,6 +172,7 @@ class RendererDXF(RendererBase):
             size=paper_size_mm,
             view_center_point=(self.width * 0.5, self.height * 0.5),
             view_height=self.height,
+            dxfattribs=dict(status=-1),  # set to not active
         )
         self.drawing = drawing
         self.modelspace = modelspace
@@ -169,162 +182,177 @@ class RendererDXF(RendererBase):
         super(RendererDXF, self).clear()
         self._init_drawing()
 
-    def _get_polyline_attribs(self, gc):
-        attribs = {**get_color_attribs(gc.get_rgb())}
+    def check_gc(self, gc):
+        gc._lineweight = self.points_to_pixels(gc.get_linewidth()) * LINEWIDTH_FACTOR
+        gc._hatch_lineweight = self.points_to_pixels(gc.get_hatch_linewidth()) * LINEWIDTH_FACTOR
+
+        gc._linetype = None
         offset, seq = gc.get_dashes()
         if seq is not None:
-            # print(offset, seq)
-            # attribs['linetype'] = 'DASHED'
             name = str(np.array(seq).round(2))
-            FACTOR = self.points_to_pixels(1)
             if name not in self.drawing.linetypes:
+                FACTOR = self.points_to_pixels(1)
                 pattern = [sum(seq) * FACTOR, *[FACTOR * (-s if si % 2 else s) for si, s in enumerate(seq)]]
-                # print(pattern)
-                # pattern = [0.2, 0.0, -0.2]
                 self.drawing.linetypes.add(
                     name=name,
                     pattern=pattern,
                     description=name,
                 )
-            attribs['linetype'] = name
-        attribs['lineweight'] = self.points_to_pixels(gc.get_linewidth()) * 10 * 2
-        return attribs
+            gc._linetype = name
 
-    def set_entity_attribs(self, gc, entity):
+        gc._transparency = None
         if gc.get_forced_alpha():
             alpha = gc.get_alpha()
             if alpha != 1:
-                entity.transparency = 1 - alpha
+                gc._transparency = 1 - alpha
         else:
             alpha = gc.get_rgb()[3]
             if alpha != 0 and alpha != 1:
-                entity.transparency = 1 - alpha
+                gc._transparency = 1 - alpha
+
+    def _get_polyline_attribs(self, gc):
+        attribs = {**get_color_attribs(gc.get_rgb())}
+        if gc._linetype is not None:
+            attribs['linetype'] = gc._linetype
+        attribs['lineweight'] = gc._lineweight
+        if attribs['lineweight'] == 0 or gc.get_rgb() is None:
+            attribs['layer'] = 'HIDDEN'
+        return attribs
+
+    def set_entity_attribs(self, gc, entity):
+        if gc._transparency is not None:
+            entity.transparency = gc._transparency
 
     def _clip_mpl(self, vertices, clippoly):
         # clip the polygon if clip rectangle present
-        if len(vertices) < 2:
-            return vertices # or None?
-        # vertices_is_closed = np.array_equal(vertices[0], vertices[-1])
-        # if vertices_is_closed:
-        #     shape = Polygon(vertices)
-        #     if not shape.is_valid:
-        #         return None
-        # else:
+        if len(vertices) < 2:  # ignore single points
+            return None
+
         shape = LineString(vertices)
+
+        if not clippoly.contains(shape) and not clippoly.intersects(shape):
+            return None
+
         if not shape.is_simple:
-            # when shape crosses itself intersection throws intersection warning and
-            # .coords attribute error, current heuristic approach is to simply not
-            # clip these vertices
-            return vertices
+            # when shape crosses itself shapely contains, etc. does not work
+            # correctly, so we split the shape, clip individual segments and
+            # join them back as a single array
+            vertices_all = []
+            for pt1, pt2 in zip(shape.coords, shape.coords[1:]):
+                vertices_ = np.array([pt1, pt2])
+                vertices_ = self._clip_mpl(vertices_, clippoly)
+                if vertices_ is not None:
+                    vertices_all.append(vertices_)
+            vertices_all = np.concatenate(vertices_all, axis=0)
+            return vertices_all
         shape = shape.intersection(clippoly)
         if shape.geom_type == 'MultiLineString':
             shape = linemerge(shape)
         vertices = np.array(list(zip(*shape.coords.xy)))
+        if vertices.size == 0:
+            return None
         return vertices
-
-    def _draw_mpl_lwpoly(self, gc, path, transform, obj):
-        dxfattribs = self._get_polyline_attribs(gc)
-        # vertices = path.transformed(transform).vertices
-
-        for vertices in path.to_polygons(closed_only=False):
-            vertices = vertices[(vertices != np.array([0, 0])).all(axis=1)]
-            close = len(vertices) > 1 and np.array_equal(vertices[0], vertices[-1])
-            entity = self.modelspace.add_lwpolyline(points=vertices,
-                                                    close=close,
-                                                    dxfattribs=dxfattribs)
-            self.set_entity_attribs(gc, entity)
-        return None
-        # vertices = path.vertices
-        # if len(vertices) > 1 and np.array_equal(vertices[0], vertices[-1]):
-        #     close = True
-        # else:
-        #     close = False
-        #
-        # if len(vertices) > 0:
-        #     # to prevent errors with discontinuous lines
-        #     vertices = vertices[~np.isnan(vertices).any(axis=1)]
-        # # clip the polygon if clip rectangle present
-        # bbox = gc.get_clip_rectangle()
-        # if bbox is not None:
-        #     clippoly = box(bbox.x0, bbox.y0, bbox.x1, bbox.y1)
-        #     vertices = self._clip_mpl(vertices, clippoly)
-        # entity = self.modelspace.add_lwpolyline(points=vertices,
-        #                                         close=close,
-        #                                         dxfattribs=dxfattribs)
-        # self.set_entity_attribs(gc, entity)
-        return entity
 
     def _draw_mpl_patch(self, gc, path, transform, rgbFace=None, obj=None):
         '''Draw a matplotlib patch object
         '''
-        path = path.cleaned(transform=transform, remove_nans=True, clip=gc.get_clip_rectangle(), simplify=True)
-        # print(path)
-        poly = self._draw_mpl_lwpoly(gc, path, transform, obj=obj)
-        return
-        # check to see if the patch is filled
+        # Using clip = bbox in path.cleaned and width / height attributes in path.to_polygons
+        # would be great, but it does not work correctly for some cases (e.g. it splits polygons
+        # when they are clipped) so hatching, that depends on closed continuous polygons is not
+        # done correctly. This is why they are not used, and we depend fully on _clip_mpl function.
+        # Do NOT use simplify on path.cleaned, it produces strange vertices at 0, 0
+        bbox = gc.get_clip_rectangle()
+        path = path.cleaned(transform=transform, remove_nans=True, simplify=False)
+        if bbox is not None:
+            clippoly = box(bbox.x0, bbox.y0, bbox.x1, bbox.y1)
+        else:
+            clippoly = None
 
+        dxfattribs = self._get_polyline_attribs(gc)
+
+        group_data = []
         if rgbFace is not None:
             hatch = self.modelspace.add_hatch(
                 dxfattribs=get_color_attribs(rgbFace)
             )
             self.set_entity_attribs(gc, hatch)
+            group_data.append(hatch)
+        else:
+            hatch = None
 
-            hpath = hatch.paths.add_polyline_path(
-                poly.get_points(format="xyb"),
-                is_closed=poly.closed)
-            hatch.associate(hpath, [poly])
+        for vertices in path.to_polygons(closed_only=False):
+            if clippoly is not None:
+                vertices = self._clip_mpl(vertices, clippoly)
+                if vertices is None:
+                    continue
+            close = (rgbFace is not None) or (len(vertices) > 1 and np.array_equal(vertices[0], vertices[-1]))
+            poly = self.modelspace.add_lwpolyline(points=vertices,
+                                                  close=close,
+                                                  dxfattribs=dxfattribs)
+            self.set_entity_attribs(gc, poly)
 
-        hpath = gc.get_hatch_path()
-        if HATCH_LINES_DRAW_AS_PAT and hpath is not None:
-            def hatch_as_pat():
-                hatch_name = gc.get_hatch()
-                if hatch_name == "'": return
-                ext = path.get_extents(transform=transform)
-                if (ext.x0 < 0 or ext.x0 > self.width) and (ext.x1 < 0 or ext.x1 > self.width):
-                    return
-                if (ext.y0 < 0 or ext.y0 > self.height) and (ext.y1 < 0 or ext.y1 > self.height):
-                    return
-
-                patterns = []
-                cx, cy = 0.5 * (ext.x1 + ext.x0), 0.5 * (ext.y1 + ext.y0)
-                _transform = Affine2D().translate(-0.5, -0.5).scale(self.dpi).translate(cx, cy)
-                hpatht = hpath.transformed(_transform)  # needs clipping
-                _path = hpatht.to_polygons(closed_only=False)
-
-                for vertices in _path:
-                    if np.array_equal(vertices[0], vertices[-1]):
-                        continue
-                    vertices *= 0.01
-                    for p0, p1 in pairwise(vertices):
-                        pattern = hatchmakerSSIO(p0, p1, dxf_mode=True, return_as_string=False)
-                        patterns.append(pattern)
-
-                patterns = [list(d.values()) for d in patterns]
-                if not patterns:
-                    return
-
-                hatch = self.modelspace.add_hatch(
-                    dxfattribs=get_color_attribs(gc.get_hatch_color()) | {
-                        'lineweight': self.points_to_pixels(gc.get_hatch_linewidth()) * 10 * 2}
-                )
-                self.set_entity_attribs(gc, hatch)
-                pat_title = clean_pat_title(hatch_name)
-                hatch.set_pattern_fill(
-                    name=f'mpl_{pat_title}',
-                    scale=100 * HATCH_SCALE_FACTOR,
-                    definition=patterns,
-                )
-                hpath_ = hatch.paths.add_polyline_path(
-                    # get path vertices from associated LWPOLYLINE entity
+            if rgbFace is not None:
+                hpath = hatch.paths.add_polyline_path(
                     poly.get_points(format='xyb'),
-                    # get closed state also from associated LWPOLYLINE entity
-                    is_closed=poly.closed)
-                hatch.associate(hpath_, [poly])
+                    is_closed=True)
+                hatch.associate(hpath, [poly])
+            self._draw_mpl_hatch(gc, path, poly, group_data=group_data)
 
-            hatch_as_pat()
-        self._draw_mpl_hatch(gc, path, transform, pline=poly)
+            if group_data:
+                group = self.drawing.groups.new()
+                group.set_data(group_data)
+        return
 
-    def _draw_mpl_hatch(self, gc, path, transform, pline):
+        # hpath = gc.get_hatch_path()
+        # if HATCH_LINES_DRAW_AS_PAT and hpath is not None:
+        #     def hatch_as_pat():
+        #         hatch_name = gc.get_hatch()
+        #         if hatch_name == "'": return
+        #         ext = path.get_extents(transform=transform)
+        #         if (ext.x0 < 0 or ext.x0 > self.width) and (ext.x1 < 0 or ext.x1 > self.width):
+        #             return
+        #         if (ext.y0 < 0 or ext.y0 > self.height) and (ext.y1 < 0 or ext.y1 > self.height):
+        #             return
+        #
+        #         patterns = []
+        #         cx, cy = 0.5 * (ext.x1 + ext.x0), 0.5 * (ext.y1 + ext.y0)
+        #         _transform = Affine2D().translate(-0.5, -0.5).scale(self.dpi).translate(cx, cy)
+        #         hpatht = hpath.transformed(_transform)  # needs clipping
+        #         _path = hpatht.to_polygons(closed_only=False)
+        #
+        #         for vertices in _path:
+        #             if np.array_equal(vertices[0], vertices[-1]):
+        #                 continue
+        #             vertices *= 0.01
+        #             for p0, p1 in pairwise(vertices):
+        #                 pattern = hatchmakerSSIO(p0, p1, dxf_mode=True, return_as_string=False)
+        #                 patterns.append(pattern)
+        #
+        #         patterns = [list(d.values()) for d in patterns]
+        #         if not patterns:
+        #             return
+        #
+        #         hatch = self.modelspace.add_hatch(
+        #             dxfattribs=get_color_attribs(gc.get_hatch_color()) | {
+        #                 'lineweight': self.points_to_pixels(gc.get_hatch_linewidth()) * 10 * 2}
+        #         )
+        #         self.set_entity_attribs(gc, hatch)
+        #         pat_title = clean_pat_title(hatch_name)
+        #         hatch.set_pattern_fill(
+        #             name=f'mpl_{pat_title}',
+        #             scale=100 * HATCH_SCALE_FACTOR,
+        #             definition=patterns,
+        #         )
+        #         hpath_ = hatch.paths.add_polyline_path(
+        #             # get path vertices from associated LWPOLYLINE entity
+        #             poly.get_points(format='xyb'),
+        #             # get closed state also from associated LWPOLYLINE entity
+        #             is_closed=poly.closed)
+        #         hatch.associate(hpath_, [poly])
+        #
+        #     hatch_as_pat()
+
+    def _draw_mpl_hatch(self, gc, path, pline, group_data=None):
         '''Draw MPL hatch
         '''
         hatch = gc.get_hatch()
@@ -338,17 +366,18 @@ class RendererDXF(RendererBase):
                     clipped = shape.coords
                 if clipped:
                     if is_poly:
-                        hatch = self.modelspace.add_hatch(dxfattribs=get_color_attribs(rgb))
-                        hatch.paths.add_polyline_path(clipped, is_closed=True)
+                        entity = self.modelspace.add_hatch(dxfattribs=get_color_attribs(rgb))
+                        entity.paths.add_polyline_path(clipped, is_closed=True)
                     else:
-                        self.modelspace.add_lwpolyline(points=clipped,
-                                                       dxfattribs=get_color_attribs(gc.get_hatch_color()) | {
-                                                           'lineweight': self.points_to_pixels(
-                                                               gc.get_hatch_linewidth()) * 10 * 2}
-                                                       )
+                        entity = self.modelspace.add_lwpolyline(points=clipped,
+                                                                dxfattribs=get_color_attribs(rgb) | {
+                                                                    'lineweight': gc._hatch_lineweight}
+                                                                )
+                    if group_data is not None:
+                        group_data.append(entity)
 
             # find extents and center of the original unclipped parent path
-            ext = path.get_extents(transform=transform)
+            ext = path.get_extents()
             dx = ext.x1 - ext.x0
             cx = 0.5 * (ext.x1 + ext.x0)
             dy = ext.y1 - ext.y0
@@ -406,7 +435,6 @@ class RendererDXF(RendererBase):
                             try:
                                 shape = shape.intersection(clippoly)
                             except GEOSException as e:
-                                raise e
                                 continue
                         if shape.geom_type in ['Polygon', 'LineString']:
                             draw(shape)
@@ -425,27 +453,14 @@ class RendererDXF(RendererBase):
         # hatch = gc.get_hatch()
         # if hatch is not None:
         #     print('\tHatch Path', gc.get_hatch_path().__dict__)
+        self.check_gc(gc)
         self._draw_mpl_patch(gc, path, transform, rgbFace, obj=self._groupd[-1])
-
-    # # Note if this is used then tick marks and lines with markers go through this function
-    # def draw_markers(self, gc, marker_path, marker_trans, path, trans, rgbFace=None):
-    #     # print('\nEntered ###DRAW_MARKERS###')
-    #     # print('\t', self._groupd)
-    #     # print('\t', gc.__dict__)
-    #     # print('\tMarker Path:', type(marker_path), marker_path.transformed(marker_trans).__dict__)
-    #     # print('\tPath:', type(path), path.transformed(trans).__dict__)
-    #     if (self._groupd[-1] == 'line2d') & ('tick' in self._groupd[-2]):
-    #         newpath = path.transformed(trans)
-    #         dx, dy = newpath.vertices[0]
-    #         _trans = marker_trans + Affine2D().translate(dx, dy)
-    #         line = self._draw_mpl_line2d(gc, marker_path, _trans)
-    #     # print('\tLeft ###DRAW_MARKERS###')
 
     def draw_image(self, gc, x, y, im, transform=None):
         pass
 
     def draw_text(self, gc, x, y, s, prop, angle, ismath=False, mtext=None):
-
+        self.check_gc(gc)
         bbox = gc.get_clip_rectangle()
 
         if bbox is not None:
