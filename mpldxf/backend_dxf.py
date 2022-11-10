@@ -37,15 +37,20 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
+import inspect
+import logging
 import math
 import os
 import sys
 import warnings
-
+from glob import glob
+from fontTools.ttLib import TTFont
 import ezdxf
 import ezdxf.math.clipping
+import matplotlib
 import numpy as np
 from ezdxf.enums import TextEntityAlignment
+from matplotlib import font_manager
 from matplotlib.backend_bases import (RendererBase, FigureCanvasBase,
                                       GraphicsContextBase, FigureManagerBase)
 from matplotlib.backend_bases import _Backend
@@ -54,8 +59,25 @@ from shapely.errors import GEOSException
 from shapely.geometry import box, LineString, Polygon
 from shapely.ops import linemerge
 
+_log = logging.getLogger(__name__)
+
+# fonts in site-packages\matplotlib\mpl-data\fonts\ttf should be installed on local
+# machine first for CAD software to recognize them
+TTF_FILES = {}
+for ttf_path in font_manager.findSystemFonts(fontpaths=None, fontext='ttf'):
+    ttf_file = os.path.basename(ttf_path)
+    if not ('.ttf' in ttf_file or '.TTF' in ttf_file):
+        continue
+    with TTFont(ttf_path) as ttfont:
+        names = ttfont['name'].names
+        family = str(names[1])
+        style = str(names[2])
+        TTF_FILES[ttf_file] = dict(family=family, bold='Italic' in style, italic='Bold' in style)
+
 # TODO: Multiline text like in logplot not breaking lines correctly.
 #       shapely filterwarnings should not be needed now?.
+#       use _log for better future code debugging
+#       linestyles test not displaying some lines correctly
 
 # When packaged with py2exe ezdxf has issues finding its templates
 # We tell it where to find them using this.
@@ -153,7 +175,10 @@ class RendererDXF(RendererBase):
            the layers we need.
         """
         drawing = ezdxf.new(dxfversion=self.dxfversion, setup=True)
-        drawing.styles.add('Arial', font='Arial.ttf')
+        for ttf_file, extended_data in TTF_FILES.items():
+            text_style = drawing.styles.add(ttf_file, font=ttf_file)
+            text_style.set_extended_font_data(**extended_data)
+
         modelspace = drawing.modelspace()
         drawing.header['$EXTMIN'] = (0, 0, 0)
         drawing.header['$EXTMAX'] = (self.width, self.height, 0)
@@ -460,6 +485,17 @@ class RendererDXF(RendererBase):
         pass
 
     def draw_text(self, gc, x, y, s, prop, angle, ismath=False, mtext=None):
+        # print(prop.__dict__)
+        # print(dir(prop))
+        # print(s)
+        props = ['get_family', 'get_file', 'get_fontconfig_pattern', 'get_math_fontfamily', 'get_name', 'get_size', 'get_size_in_points', 'get_slant', 'get_stretch', 'get_style', 'get_variant', 'get_weight']
+        # for prop_ in props:
+        #     print(prop_, getattr(prop, prop_)())
+        # print(s)
+        # print(dir(gc))
+        # print(dir(prop))
+        # if mtext is not None:
+        #     print(dir(mtext))
         self.check_gc(gc)
         bbox = gc.get_clip_rectangle()
 
@@ -488,12 +524,12 @@ class RendererDXF(RendererBase):
 
         # fontsize = self.points_to_pixels(prop.get_size_in_points()) original
         fontsize = prop.get_size_in_points()
-
+        fontname = os.path.basename(font_manager.findfont(prop))
         # s = s.replace(u"\u2212", "-")
         s.encode('ascii', 'ignore').decode()
         text = self.modelspace.add_text(s, height=fontsize, rotation=angle, dxfattribs={
             **get_color_attribs(gc.get_rgb()),
-            'style': 'Arial',
+            'style': fontname,
         })
         self.set_entity_attribs(gc, text)
 
