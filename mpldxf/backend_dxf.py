@@ -72,7 +72,8 @@ for ttf_path in font_manager.findSystemFonts(fontpaths=None, fontext='ttf'):
         style = str(names[2])
         TTF_FILES[ttf_file] = dict(family=family, bold='Italic' in style, italic='Bold' in style)
 
-# TODO: Multiline text like in logplot not breaking lines correctly.
+# TODO: Multiline text like in logplot not breaking lines correctly.:
+#       commenting points_to_pixels functions makes identical text wrapping but changes font position
 #       shapely filterwarnings should not be needed now?.
 #       use _log for better future code debugging
 #       linestyles test not displaying some lines correctly (DONE)
@@ -488,6 +489,8 @@ class RendererDXF(RendererBase):
         pass
 
     def draw_text(self, gc, x, y, s, prop, angle, ismath=False, mtext=None):
+        print('DXF draw_text', s)
+        # print(x * 72 / 100, y * 72 / 100, s, mtext)
         # print(prop.__dict__)
         # print(dir(prop))
         # print(s)
@@ -585,11 +588,27 @@ class RendererDXF(RendererBase):
     def get_canvas_width_height(self):
         return self.width, self.height
 
-    def new_gc(self):
-        return GraphicsContextBase()
+    # def points_to_pixels(self, points):
+    #     return points / 72.0 * self.dpi
 
-    def points_to_pixels(self, points):
-        return points / 72.0 * self.dpi
+    def get_text_width_height_descent(self, s, prop, ismath):
+        font = self._get_font_ttf(prop)
+        font.set_text(s, 0.0, flags=2)
+        w, h = font.get_width_height()
+        d = font.get_descent()
+        scale = 1 / 64
+        w *= scale * 0.72 # if changed to 0.72 text is correctly wraped only for horizontal lines
+        h *= scale * 1
+        d *= scale * 1
+        print('DXF', s, w, h, d)
+        return w, h, d
+
+    def _get_font_ttf(self, prop):
+        fnames = font_manager.fontManager._find_fonts_by_props(prop)
+        font = font_manager.get_font(fnames)
+        font.clear()
+        font.set_size(prop.get_size_in_points(), self.dpi)
+        return font
 
 
 class FigureCanvasDXF(FigureCanvasBase):
