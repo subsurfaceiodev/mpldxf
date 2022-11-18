@@ -70,7 +70,7 @@ for ttf_path in font_manager.findSystemFonts(fontpaths=None, fontext='ttf'):
         names = ttfont['name'].names
         family = str(names[1])
         style = str(names[2])
-        TTF_FILES[ttf_file] = dict(family=family, bold='Italic' in style, italic='Bold' in style)
+        TTF_FILES[ttf_file] = dict(family=family, bold='Bold' in style, italic='Italic' in style)
 
 # TODO: Multiline text like in logplot not breaking lines correctly.:
 #       commenting points_to_pixels functions makes identical text wrapping but changes font position
