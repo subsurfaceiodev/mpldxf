@@ -37,4 +37,4 @@ data.reset_index(level=1, inplace=True)
 data = pd.concat([data_, data])
 print(data)
 # data['#'] += 1
-data.to_pickle('HATCH_SAMPLES.pickle')
+data.to_pickle('HATCH_SAMPLES.pickle', compression='gzip')

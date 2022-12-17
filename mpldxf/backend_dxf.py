@@ -56,6 +56,7 @@ from matplotlib.transforms import Affine2D
 from shapely.errors import GEOSException
 from shapely.geometry import box, LineString, Polygon
 from shapely.ops import linemerge
+from mpldxf.functions import clip_geometry
 
 _log = logging.getLogger(__name__)
 
@@ -251,34 +252,7 @@ class RendererDXF(RendererBase):
             entity.transparency = gc._transparency
 
     def _clip_mpl(self, vertices, clippoly):
-        # clip the polygon if clip rectangle present
-        if len(vertices) < 2:  # ignore single points
-            return None
-
-        shape = LineString(vertices)
-
-        if not clippoly.contains(shape) and not clippoly.intersects(shape):
-            return None
-
-        if not shape.is_simple:
-            # when shape crosses itself shapely contains, etc. does not work
-            # correctly, so we split the shape, clip individual segments and
-            # join them back as a single array
-            vertices_all = []
-            for pt1, pt2 in zip(shape.coords, shape.coords[1:]):
-                vertices_ = np.array([pt1, pt2])
-                vertices_ = self._clip_mpl(vertices_, clippoly)
-                if vertices_ is not None:
-                    vertices_all.append(vertices_)
-            vertices_all = np.concatenate(vertices_all, axis=0)
-            return vertices_all
-        shape = shape.intersection(clippoly)
-        if shape.geom_type == 'MultiLineString':
-            shape = linemerge(shape)
-        vertices = np.array(list(zip(*shape.coords.xy)))
-        if vertices.size == 0:
-            return None
-        return vertices
+        return clip_geometry(vertices, clippoly)
 
     def _draw_mpl_patch(self, gc, path, transform, rgbFace=None, obj=None):
         '''Draw a matplotlib patch object
