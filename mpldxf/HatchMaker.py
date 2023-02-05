@@ -53,18 +53,19 @@ def hatchmaker_single(pt1, pt2, dxf_mode=False, return_as_data=False):
         YDir = abs(y_distance)
         Factor = 1
         RF = 1
-        if AngZone == 0:
-            DeltaY = abs(np.sin(Ang))
-            DeltaX = abs(abs(1 / np.sin(Ang) - abs(np.cos(Ang))))
-        elif AngZone == 1:
-            DeltaY = abs(np.cos(Ang))
-            DeltaX = abs(np.sin(Ang))
-        elif AngZone == 2:
-            DeltaY = abs(np.cos(Ang))
-            DeltaX = abs(abs(1 / np.cos(Ang) - abs(np.sin(Ang))))
-        elif AngZone == 3:
-            DeltaY = abs(np.sin(Ang))
-            DeltaX = abs(np.cos(Ang))
+        match AngZone:
+            case 0:
+                DeltaY = abs(np.sin(Ang))
+                DeltaX = abs(abs(1 / np.sin(Ang) - abs(np.cos(Ang))))
+            case 1:
+                DeltaY = abs(np.cos(Ang))
+                DeltaX = abs(np.sin(Ang))
+            case 2:
+                DeltaY = abs(np.cos(Ang))
+                DeltaX = abs(abs(1 / np.cos(Ang) - abs(np.sin(Ang))))
+            case 3:
+                DeltaY = abs(np.sin(Ang))
+                DeltaX = abs(np.cos(Ang))
         if not np.isclose(XDir, YDir, atol=0.0001):  # 0.0001 instead of 0.001
             Ratio = YDir / XDir if XDir < YDir else XDir / YDir
             RF = Ratio * Factor
