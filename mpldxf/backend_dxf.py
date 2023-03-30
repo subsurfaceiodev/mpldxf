@@ -82,7 +82,7 @@ for ttf_path in font_manager.findSystemFonts(fontpaths=None, fontext='ttf'):
 
 # When packaged with py2exe ezdxf has issues finding its templates
 # We tell it where to find them using this.
-# Note we also need to make sure they get packaged by adding them to the
+# note we also need to make sure they get packaged by adding them to the
 # configuration in setup.py
 if hasattr(sys, 'frozen'):
     ezdxf.options.template_dir = os.path.dirname(sys.executable)
