@@ -1,7 +1,7 @@
 from fractions import Fraction
 
 import numpy as np
-from softwaresolutions.common.functions import str_replace_from_map
+from mpldxf.utils import str_replace_from_map
 
 from mpldxf.HatchMaker import get_angle, data_to_string, rotate
 
