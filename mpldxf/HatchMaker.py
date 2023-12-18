@@ -1,17 +1,18 @@
+import re
+from warnings import warn
+from dataclasses import dataclass
+from fractions import Fraction
+from typing import Iterable
+
+import ezdxf
 import numpy as np
 
 pi = np.pi
 
 
-def get_angle(x_distance, y_distance):
-    angle = np.arctan2(y_distance, x_distance)
-    if angle < 0:
-        angle = 2 * pi + angle
-    return angle
-
-
 def rotate(p, origin=(0, 0), angle=0):
     # https://stackoverflow.com/questions/34372480/rotate-point-about-another-point-in-degrees-python
+    # angle in radians
     R = np.array([[np.cos(angle), -np.sin(angle)],
                   [np.sin(angle), np.cos(angle)]])
     o = np.atleast_2d(origin)
@@ -19,143 +20,256 @@ def rotate(p, origin=(0, 0), angle=0):
     return np.squeeze((R @ (p.T - o.T) + o.T).T)
 
 
-def data_to_string(data):
-    data_values = []
-    for v in data.values():
-        if not isinstance(v, (list, tuple, np.ndarray)):
-            v = [v]
-        data_values.extend(v)
-    data_values = [f'{data_value:.6f}' if i == 0 else f'{data_value:.8f}' for i, data_value in
-                   enumerate(data_values)]
-    data_str = ','.join(data_values)
-    return data_str
+PAT_UNITS_MAP = {'Millimeters': 'MM', 'Inches': 'INCH'}
 
 
-def hatchmaker_single(pt1, pt2, dxf_mode=False, return_as_data=False):
-    pt1, pt2 = np.round(pt1, 3), np.round(pt2, 3)  # prevents invalid angles ?
-    x_distance = pt2[0] - pt1[0]
-    y_distance = pt2[1] - pt1[1]
+def clean_pat_title(pat_title, software='AutoCAD'):
+    if software == 'AutoCAD':
+        pat_title = clean_special_characters(pat_title)
+    return pat_title
 
-    Dist = np.sqrt(x_distance ** 2 + y_distance ** 2)
-    AngTo = get_angle(x_distance, y_distance)
-    AngFrom = get_angle(-x_distance, -y_distance)
-    IsValid = None
 
-    if np.isclose(pt1[0], pt2[0], atol=0.0001) or np.isclose(pt1[1], pt2[1], atol=0.0001):
-        DeltaX = 0
-        DeltaY = 1
-        Gap = Dist - 1
-        IsValid = True
+def get_multiplier(value):
+    multiplier = Fraction(value).limit_denominator(max_denominator=1000).denominator
+    return multiplier
+
+
+def get_angle_offsets(angle, round_precision=3):
+    def integer_check(x, y):
+        x_rounded = round(float(x), round_precision)
+        y_rounded = round(float(y), round_precision)
+        if x_rounded.is_integer() and y_rounded.is_integer():
+            return x, y
+
+    tan_angle = abs(np.tan(angle))  # check if abs is sufficient for  angles like 92 where value is negative!
+    # tan_angle_rounded = round(float(tan_angle), 1)
+    # angle = np.arctan(tan_angle_rounded)
+    # tan_angle = tan_angle_rounded
+    if tan_angle > 1.0e+5 or np.isclose(tan_angle, 0):
+        dx, dy, d = 0, 1, 1
+    elif np.isclose(tan_angle, 1):
+        d = np.sqrt(2)
+        dx = d / 2
+        dy = -dx
     else:
-        Ang = AngTo if AngTo < pi else AngFrom
-        AngZone = int(Ang / (pi / 4))
-        XDir = abs(x_distance)
-        YDir = abs(y_distance)
-        Factor = 1
-        RF = 1
-        match AngZone:
-            case 0:
-                DeltaY = abs(np.sin(Ang))
-                DeltaX = abs(abs(1 / np.sin(Ang) - abs(np.cos(Ang))))
-            case 1:
-                DeltaY = abs(np.cos(Ang))
-                DeltaX = abs(np.sin(Ang))
-            case 2:
-                DeltaY = abs(np.cos(Ang))
-                DeltaX = abs(abs(1 / np.cos(Ang) - abs(np.sin(Ang))))
-            case 3:
-                DeltaY = abs(np.sin(Ang))
-                DeltaX = abs(np.cos(Ang))
-        if not np.isclose(XDir, YDir, atol=0.0001):  # 0.0001 instead of 0.001
-            Ratio = YDir / XDir if XDir < YDir else XDir / YDir
-            RF = Ratio * Factor
-            Scaler = 1 / (XDir if XDir < YDir else YDir)
-            if not np.isclose(Ratio, round(Ratio), atol=0.001):
-                while Factor <= 100 and not np.isclose(RF, round(RF), atol=0.001):
-                    Factor = Factor + 1
-                    RF = Ratio * Factor
-                if 1 < Factor <= 100:
-                    _AB = XDir * Scaler * Factor
-                    _BC = YDir * Scaler * Factor
-                    _AC = np.sqrt(_AB ** 2 + _BC ** 2)
-                    _EF = 1
-                    x = 1
-                    while x < (_AB - 0.5):
-                        y = x * (YDir / XDir)
-                        if Ang < pi / 2:
-                            h = (1 + int(y)) - y
-                        else:
-                            h = y - int(y)
-                        if h < _EF:
-                            _AD = x
-                            _DE = y
-                            _AE = np.sqrt(x ** 2 + y ** 2)
-                            _EF = h
-                        x = x + 1
-                    if _EF < 1:
-                        _EH = (_BC * _EF) / _AC
-                        _FH = (_AB * _EF) / _AC
-                        DeltaX = _AE + (-_EH if Ang > (pi / 2) else _EH)
-                        DeltaY = _FH
-                        Gap = Dist - _AC
-                        IsValid = True
-        if Factor == 1:
-            DeltaY = RF * DeltaY
-            Gap = Dist - abs(Factor * (1 / DeltaY))
-            IsValid = True  # revision pending
-    if IsValid is True:
-        if dxf_mode:
-            DeltaX, DeltaY = rotate((DeltaX, DeltaY), angle=AngTo)
-        data = dict(
-            angle=np.rad2deg(AngTo),
-            base_point=pt1,
-            offset=(DeltaX, DeltaY),
-            dash_length_items=(Dist, Gap),
+        def method1():
+            x = 1
+            while True:
+                y = x * tan_angle
+                y_rounded = round(y, round_precision)
+                if y_rounded.is_integer():
+                    break
+                x += 1
+            return x, y
+
+        def method2():
+            # tan_angle = OPP / ADJ
+            # if tan_angle > 1 then OPP > ADJ
+            # if tan_angle < 1 then OPP < ADJ
+            if tan_angle < 1:
+                x = np.abs(1 / tan_angle)
+                y = 1
+                non_unit_var = x
+            else:
+                x = 1
+                y = tan_angle
+                non_unit_var = y
+            checked = integer_check(x, y)
+            if checked is not None:
+                return checked
+            else:
+                multiplier = get_multiplier(non_unit_var)
+                x_ = x * multiplier
+                y_ = y * multiplier
+                return x_, y_
+
+        x, y = method2()
+        d = np.sqrt(x ** 2 + y ** 2)
+        tan_angle_sign = np.sign(np.tan(angle))
+        dy = tan_angle_sign * 1 / d  # pending sign calculation
+
+        def get_dx(angle, dy):
+            dy_line_equation_y_intercept = dy / abs(np.cos(angle))
+
+            # dy line equation
+            def dy_line_equation(x):
+                y = tan_angle * x + dy_line_equation_y_intercept
+                # print(angle, x, dy_line_equation_y_intercept, tan_angle, y)
+                return y
+
+            x_ = 0
+            while True:
+                y_ = dy_line_equation(x_)
+                checked = integer_check(x_, y_)
+                if x_ > 5000:
+                    raise StopIteration('max iter reached')
+                elif checked is None:
+                    x_ += 1
+                else:
+                    d_ = np.sqrt(x_ ** 2 + (y_ - dy_line_equation_y_intercept) ** 2)
+                    d__ = dy * tan_angle
+                    dx = d_ + d__
+                    return dx
+
+        dx = get_dx(angle, abs(dy))
+
+    return dx, dy, d
+
+
+@dataclass
+class HatchLine:
+    angle: float
+    x: float
+    y: float
+    shift: float
+    offset: float
+    dash: float
+    space: float
+
+    def to_str(self):
+        data = [
+            f'{x:.6f}' if i == 0 else f'{x:.8f}'
+            for i, x in enumerate(self.__dict__.values())
+        ]
+        data_str = ','.join(data)
+        return data_str
+
+    def get_ezdxf_definition(self):
+        shift, offset = rotate(
+            (self.shift, self.offset), angle=np.deg2rad(self.angle)
         )
-    else:
-        # pt1, pt2 = np.round(pt1, 3), np.round(pt2, 3)  # prevents invalid angles ?
-        # to_return = hatchmaker_single(pt1, pt2, dxf_mode=dxf_mode, return_as_data=return_as_data)
-        # return to_return
-        # warnings.warn(f'Invalid parameters {pt1}, {pt2}, {np.rad2deg(AngTo)}')
-        data = None
-    if return_as_data:
-        return data
-    else:
-        if data is not None:
-            strcat = data_to_string(data)
+        return [self.angle, (self.x, self.y), (shift, offset), [self.dash, self.space]]
+
+
+@dataclass
+class HatchMaker:
+    hatch_lines: Iterable[HatchLine] = None
+    pat_title: str = 'title'
+    pat_description: str = 'description'
+
+    def set_from_frame(
+            self,
+            frame,
+            round_decimals=4,
+    ):
+        p0 = list(zip(frame['x0'], frame['y0']))
+        p1 = list(zip(frame['x1'], frame['y1']))
+        self.set_from_points(
+            p0,
+            p1,
+            round_decimals,
+        )
+        return self
+
+    def set_from_points(
+            self,
+            p0,
+            p1,
+            round_decimals=4,  # < 5 prevents invalid angles
+    ):
+        p0 = np.round(p0, round_decimals)
+        p1 = np.round(p1, round_decimals)
+
+        p0 = p0
+        p1 = p1
+        p0_x = p0[:, 0]
+        p0_y = p0[:, 1]
+        p1_x = p1[:, 0]
+        p1_y = p1[:, 1]
+        delta_x = p1_x - p0_x
+        delta_y = p1_y - p0_y
+        length = np.sqrt(delta_x ** 2 + delta_y ** 2)
+        angle_to = get_clockwise_angle(delta_x, delta_y)
+
+        hatch_lines = []
+        for angle, x, y, dash in zip(
+                angle_to,
+                p0_x,
+                p0_y,
+                length,
+        ):
+            try:
+                dx, dy, d = get_angle_offsets(angle)
+            except StopIteration:
+                warn(f'line with {angle=} {x=} {y=} reached maximum iterations')
+                continue
+            space = d - dash
+            hatch_lines.append(HatchLine(
+                np.rad2deg(angle), x, y, dx, dy, dash, -space
+            ))
+
+        self.hatch_lines = hatch_lines
+        return self
+
+    def to_pat_str(
+            self,
+            pat_software='AutoCAD',
+            pat_units='MM',
+            pat_type='Model',
+            export_path=None,
+    ):
+        if pat_software == 'AutoCAD':
+            self.pat_title = clean_special_characters(self.pat_title)
+            pat_str = [
+                f'*{self.pat_title},{self.pat_description}',
+                ';angle,x,y,shift,offset,dash,space',
+            ]
+        elif pat_software == 'Revit':
+            pat_str = [
+                f';%UNITS={PAT_UNITS_MAP[pat_units]}',
+                f'*{self.pat_title},{self.pat_description}',
+                f';%TYPE={pat_type.upper()}',
+                ';angle,x,y,shift,offset,dash,space',
+            ]
         else:
-            strcat = None
-        return strcat
+            raise Exception(f'{pat_software=} not valid')
+
+        for hatch_line in self.hatch_lines:
+            pat_str.append(hatch_line.to_str())
+
+        pat_str = '\n'.join(pat_str + [''])
+        if export_path is not None:
+            print(
+                pat_str,
+                file=open(f'{export_path}/{self.pat_title}.pat', 'a'),
+                end='',
+            )
+        return pat_str
+
+    def to_dxf(
+            self,
+            doc=None,
+            doc_save=True,
+            poly_x_offset=0,
+            scale=1.0,
+    ):
+        # adapted from https://ezdxf.readthedocs.io/en/stable/tutorials/hatch_pattern.html#tut-hatch-pattern
+        if doc is None:
+            doc = ezdxf.new()
+        msp = doc.modelspace()
+        hatch = msp.add_hatch()
+        hatch.set_pattern_fill(
+            self.pat_title,
+            color=7,
+            angle=0,
+            scale=scale,
+            style=0,
+            pattern_type=0,
+            definition=[hatch_line.get_ezdxf_definition() for hatch_line in self.hatch_lines]
+        )
+        points = [(poly_x_offset, 0), (poly_x_offset + 10, 0), (poly_x_offset + 10, 10), (poly_x_offset, 10)]
+        hatch.paths.add_polyline_path(points)
+        msp.add_lwpolyline(points, close=True, dxfattribs={"color": 1})
+        if doc_save:
+            doc.saveas(f'{self.pat_title}.dxf')
 
 
-def hatchmaker(pt1, pt2, dxf_mode=False, return_as_data=False, pat_header='pat_title,pat_description'):
-    returned = []
-    for pt1_, pt2_ in zip(pt1, pt2):
-        returned_ = hatchmaker_single(pt1_, pt2_, dxf_mode=dxf_mode, return_as_data=return_as_data)
-        if returned_ is not None:
-            returned.append(returned_)
-    if return_as_data:
-        returned = returned
-    else:
-        returned = '\n'.join([f'*{pat_header}', *returned, ''])
-    return returned
+def clean_special_characters(string):
+    return re.sub('\\W+', '', string)
 
 
-def test1():
-    angles = np.arange(90, 92, 0.5)
-    angles = [30, 92, 110]
-    pt1 = (0, 0)
-    for angle in angles:
-        angle_rad = np.deg2rad(angle)
-        pt2 = (0.1 * np.cos(angle_rad), 0.1 * np.sin(angle_rad))
-        returned = hatchmaker_single(pt1, pt2, return_as_data=False)
-        if returned is not None:
-            print(returned)
-
-
-# test1()
-# pt1 = [(0, 0), (0, 0), (0, 0)]
-# pt2 = [(0, -0.1), (0, 0.1), (0.1, 0.1)]
-# pt1 = [(2.2076/10, 6.5537/10),(2.2539/10, 6.3684/10)] # ,(2.2539/10, 6.3684/10)
-# pt2 = [(2.0686/10, 6.5768/10),(2.2076/10, 6.5537/10)]
-# print(hatchmaker(pt1, pt2, return_as_data=False))
+def get_clockwise_angle(x_distance, y_distance):
+    # angle in radians
+    angle = np.arctan2(y_distance, x_distance)
+    angle[angle < 0] = 2 * pi + angle[angle < 0]
+    return angle
