@@ -24,9 +24,6 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 import os
 from setuptools import setup
 
-import versioneer
-
-
 AUTHOR_NAME = 'David Kent'
 AUTHOR_EMAIL = 'davidkent@fastmail.com.au'
 
@@ -41,8 +38,8 @@ def read(fname):
 
 setup(
     name='mpldxf',
-    version=versioneer.get_version(),
-    cmdclass=versioneer.get_cmdclass(),
+    # version=versioneer.get_version(),
+    # cmdclass=versioneer.get_cmdclass(),
     description='A matplotlib backend to write DXF drawings.',
     author=AUTHOR_NAME,
     url='https://github.com/dmkent/mpldxf',
