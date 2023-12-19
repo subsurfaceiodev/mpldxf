@@ -4,10 +4,13 @@ from dataclasses import dataclass
 from fractions import Fraction
 from typing import Iterable
 
+import io
 import ezdxf
 import numpy as np
+import pandas as pd
 
 pi = np.pi
+PAT_UNITS_MAP = {'Millimeters': 'MM', 'Inches': 'INCH'}
 
 
 def rotate(p, origin=(0, 0), angle=0):
@@ -20,49 +23,52 @@ def rotate(p, origin=(0, 0), angle=0):
     return np.squeeze((R @ (p.T - o.T) + o.T).T)
 
 
-PAT_UNITS_MAP = {'Millimeters': 'MM', 'Inches': 'INCH'}
-
-
 def clean_pat_title(pat_title, software='AutoCAD'):
     if software == 'AutoCAD':
         pat_title = clean_special_characters(pat_title)
     return pat_title
 
 
-def get_multiplier(value):
-    multiplier = Fraction(value).limit_denominator(max_denominator=1000).denominator
+def get_multiplier(
+        value,
+        round_decimals,
+):
+    multiplier = Fraction(value).limit_denominator(max_denominator=10 ** round_decimals).denominator
     return multiplier
 
 
-def get_angle_offsets(angle, round_precision=3):
+def get_angle_offsets(
+        angle,
+        round_decimals=4,
+        canvas_width=1,
+        canvas_height=1,
+):
     def integer_check(x, y):
-        x_rounded = round(float(x), round_precision)
-        y_rounded = round(float(y), round_precision)
+        x_rounded = round(float(x), round_decimals)
+        y_rounded = round(float(y), round_decimals)
         if x_rounded.is_integer() and y_rounded.is_integer():
             return x, y
 
-    tan_angle = abs(np.tan(angle))  # check if abs is sufficient for  angles like 92 where value is negative!
-    # tan_angle_rounded = round(float(tan_angle), 1)
-    # angle = np.arctan(tan_angle_rounded)
-    # tan_angle = tan_angle_rounded
-    if tan_angle > 1.0e+5 or np.isclose(tan_angle, 0):
-        dx, dy, d = 0, 1, 1
+    # seems to work as a rule of thumb
+    if round_decimals > 4:
+        dx_max_iterations = 50000
+    else:
+        dx_max_iterations = 5000
+
+    tan_angle = abs(np.tan(angle))
+    if tan_angle > 1.0e+5:
+        # vertical line
+        dx, dy, d = 0, canvas_width, canvas_height
+    elif np.isclose(tan_angle, 0):
+        # horizontal line
+        dx, dy, d = 0, canvas_height, canvas_width
     elif np.isclose(tan_angle, 1):
-        d = np.sqrt(2)
+        # TODO canvas ratio not equal to 1
+        d = np.sqrt(canvas_width ** 2 + canvas_height ** 2)
         dx = d / 2
         dy = -dx
     else:
-        def method1():
-            x = 1
-            while True:
-                y = x * tan_angle
-                y_rounded = round(y, round_precision)
-                if y_rounded.is_integer():
-                    break
-                x += 1
-            return x, y
-
-        def method2():
+        def get_x_y():
             # tan_angle = OPP / ADJ
             # if tan_angle > 1 then OPP > ADJ
             # if tan_angle < 1 then OPP < ADJ
@@ -78,15 +84,18 @@ def get_angle_offsets(angle, round_precision=3):
             if checked is not None:
                 return checked
             else:
-                multiplier = get_multiplier(non_unit_var)
+                multiplier = get_multiplier(
+                    non_unit_var,
+                    round_decimals=round_decimals,
+                )
                 x_ = x * multiplier
                 y_ = y * multiplier
                 return x_, y_
 
-        x, y = method2()
+        x, y = get_x_y()
         d = np.sqrt(x ** 2 + y ** 2)
         tan_angle_sign = np.sign(np.tan(angle))
-        dy = tan_angle_sign * 1 / d  # pending sign calculation
+        dy = tan_angle_sign * 1 / d
 
         def get_dx(angle, dy):
             dy_line_equation_y_intercept = dy / abs(np.cos(angle))
@@ -101,7 +110,7 @@ def get_angle_offsets(angle, round_precision=3):
             while True:
                 y_ = dy_line_equation(x_)
                 checked = integer_check(x_, y_)
-                if x_ > 5000:
+                if x_ > dx_max_iterations:
                     raise StopIteration('max iter reached')
                 elif checked is None:
                     x_ += 1
@@ -112,7 +121,6 @@ def get_angle_offsets(angle, round_precision=3):
                     return dx
 
         dx = get_dx(angle, abs(dy))
-
     return dx, dy, d
 
 
@@ -147,6 +155,22 @@ class HatchMaker:
     pat_title: str = 'title'
     pat_description: str = 'description'
 
+    @staticmethod
+    def pat_str_to_points(pat_str):
+        # useful for testing
+        df = pd.read_csv(
+            io.StringIO(pat_str),
+            comment='*',
+            skipinitialspace=True
+        ).rename(
+            columns={';angle': 'angle', 'x': 'x0', 'y': 'y0'}
+        )
+        df['x1'] = df['x0'] + df['dash'] * np.cos(np.deg2rad(df['angle']))
+        df['y1'] = df['y0'] + df['dash'] * np.sin(np.deg2rad(df['angle']))
+        p0 = list(zip(df['x0'], df['y0']))
+        p1 = list(zip(df['x1'], df['y1']))
+        return p0, p1
+
     def set_from_frame(
             self,
             frame,
@@ -166,6 +190,8 @@ class HatchMaker:
             p0,
             p1,
             round_decimals=4,  # < 5 prevents invalid angles
+            canvas_width=1,
+            canvas_height=1,
     ):
         p0 = np.round(p0, round_decimals)
         p1 = np.round(p1, round_decimals)
@@ -189,7 +215,12 @@ class HatchMaker:
                 length,
         ):
             try:
-                dx, dy, d = get_angle_offsets(angle)
+                dx, dy, d = get_angle_offsets(
+                    angle,
+                    round_decimals=round_decimals,
+                    canvas_width=canvas_width,
+                    canvas_height=canvas_height,
+                )
             except StopIteration:
                 warn(f'line with {angle=} {x=} {y=} reached maximum iterations')
                 continue
