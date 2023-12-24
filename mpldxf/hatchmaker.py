@@ -42,6 +42,7 @@ def get_angle_offsets(
         round_decimals=4,
         canvas_width=1,
         canvas_height=1,
+        print_log=False,
 ):
     def integer_check(x, y):
         x_rounded = round(float(x), round_decimals)
@@ -55,72 +56,102 @@ def get_angle_offsets(
     else:
         dx_max_iterations = 5000
 
-    tan_angle = abs(np.tan(angle))
-    if tan_angle > 1.0e+5:
+    angle_degrees = np.rad2deg(angle)
+    tan_angle = np.tan(angle)
+    tan_angle_abs = abs(tan_angle)
+    log = f'--------------\nCalculation started for {angle_degrees=} {tan_angle=}\n'
+
+    if tan_angle_abs > 1.0e+5:
         # vertical line
+        log += 'vertical line\n'
         dx, dy, d = 0, canvas_width, canvas_height
-    elif np.isclose(tan_angle, 0):
+    elif np.isclose(tan_angle_abs, 0):
         # horizontal line
+        log += 'horizontal line\n'
         dx, dy, d = 0, canvas_height, canvas_width
-    elif np.isclose(tan_angle, 1):
-        # TODO canvas ratio not equal to 1
+    elif np.isclose(tan_angle_abs, 1) and np.isclose(canvas_width / canvas_height, 1):
+        log += '45 degrees line\n'
         d = np.sqrt(canvas_width ** 2 + canvas_height ** 2)
         dx = d / 2
         dy = -dx
     else:
+        log += 'line at angle\n'
+
         def get_x_y():
             # tan_angle = OPP / ADJ
             # if tan_angle > 1 then OPP > ADJ
             # if tan_angle < 1 then OPP < ADJ
-            if tan_angle < 1:
-                x = np.abs(1 / tan_angle)
+            # TODO check effect of canvas_width > canvas_height on asterisk sample
+            # 0.5 vs 1 and 2 vs 1
+            if tan_angle_abs < 1:
+                x = 1 / tan_angle_abs
                 y = 1
-                non_unit_var = x
+                non_unit_var = x / canvas_factor
             else:
                 x = 1
-                y = tan_angle
-                non_unit_var = y
-            checked = integer_check(x, y)
-            if checked is not None:
-                return checked
-            else:
-                multiplier = get_multiplier(
-                    non_unit_var,
-                    round_decimals=round_decimals,
-                )
-                x_ = x * multiplier
-                y_ = y * multiplier
-                return x_, y_
+                y = tan_angle_abs
+                non_unit_var = y / canvas_factor
+            # checked = integer_check(x * canvas_factor, y * canvas_factor)
+            # if checked is not None:
+            #     return checked
+            # else:
+            multiplier = get_multiplier(
+                non_unit_var,
+                round_decimals=round_decimals,
+            )
+            print(f'{x=} {y=} {multiplier=}')
+            x_ = x * multiplier
+            y_ = y * multiplier
+            return x_, y_
 
+        canvas_factor = canvas_width * canvas_height
         x, y = get_x_y()
         d = np.sqrt(x ** 2 + y ** 2)
-        tan_angle_sign = np.sign(np.tan(angle))
-        dy = tan_angle_sign * 1 / d
+        log += f'{x=} {y=} {d=}'
+        tan_angle_sign = np.sign(tan_angle)
+        dy = tan_angle_sign * canvas_factor / d
 
         def get_dx(angle, dy):
+            # TODO maybe its better to check if each point in iteration is multiple of base point?
+            #  view asterisk guide
+            #  one could get blue line equation and evaluate with x+basepointx
+            #  also maybe use get_multiplier directly
             dy_line_equation_y_intercept = dy / abs(np.cos(angle))
 
             # dy line equation
             def dy_line_equation(x):
-                y = tan_angle * x + dy_line_equation_y_intercept
+                y = tan_angle_abs * x + dy_line_equation_y_intercept
                 # print(angle, x, dy_line_equation_y_intercept, tan_angle, y)
                 return y
 
             x_ = 0
             while True:
                 y_ = dy_line_equation(x_)
-                checked = integer_check(x_, y_)
+                checked = integer_check(x_ / canvas_width, y_ / canvas_height)
+                y_dy_negative = y_ - dy_line_equation_y_intercept * 2
+                checked_dy_negative = integer_check(x_ / canvas_width, y_dy_negative / canvas_height)
+                if checked_dy_negative is not None:
+                    # TODO for asterisk findings
+                    y_ = y_dy_negative
+                    dy = -dy
+                    dy_line_equation_y_intercept *= -1
+                    checked = checked_dy_negative
                 if x_ > dx_max_iterations:
+                    if print_log:
+                        print(log)
                     raise StopIteration('max iter reached')
                 elif checked is None:
-                    x_ += 1
+                    x_ += canvas_width
                 else:
                     d_ = np.sqrt(x_ ** 2 + (y_ - dy_line_equation_y_intercept) ** 2)
-                    d__ = dy * tan_angle
+                    d__ = dy * tan_angle_abs
                     dx = d_ + d__
-                    return dx
+                    return dx, dy
 
-        dx = get_dx(angle, abs(dy))
+        dx, dy = get_dx(angle, abs(dy))
+        dy *= tan_angle_sign
+    if print_log:
+        print(log)
     return dx, dy, d
 
 
@@ -156,15 +187,25 @@ class HatchMaker:
     pat_description: str = 'description'
 
     @staticmethod
-    def pat_str_to_points(pat_str):
+    def read_pat_as_df(path):
         # useful for testing
+        s_ = ''
+        with open(path, 'r') as f:
+            for x in f:
+                if x.startswith((';', '*')) or x == '\n':
+                    continue
+                s_ += x
         df = pd.read_csv(
-            io.StringIO(pat_str),
-            comment='*',
-            skipinitialspace=True
-        ).rename(
-            columns={';angle': 'angle', 'x': 'x0', 'y': 'y0'}
+            io.StringIO(s_),
+            header=None,
         )
+        df.columns = ['angle', 'x', 'y', 'shift', 'offset', 'dash', 'space']
+        return df
+
+    @staticmethod
+    def df_to_points(df):
+        # useful for testing
+        df = df.rename(columns={'x': 'x0', 'y': 'y0'})
         df['x1'] = df['x0'] + df['dash'] * np.cos(np.deg2rad(df['angle']))
         df['y1'] = df['y0'] + df['dash'] * np.sin(np.deg2rad(df['angle']))
         p0 = list(zip(df['x0'], df['y0']))
@@ -214,19 +255,21 @@ class HatchMaker:
                 p0_y,
                 length,
         ):
+            angle_degrees = np.rad2deg(angle)
             try:
                 dx, dy, d = get_angle_offsets(
                     angle,
                     round_decimals=round_decimals,
                     canvas_width=canvas_width,
                     canvas_height=canvas_height,
+                    print_log=True,
                 )
             except StopIteration:
-                warn(f'line with {angle=} {x=} {y=} reached maximum iterations')
+                warn(f'line with {angle_degrees=} {x=} {y=} reached maximum iterations')
                 continue
             space = d - dash
             hatch_lines.append(HatchLine(
-                np.rad2deg(angle), x, y, dx, dy, dash, -space
+                angle_degrees, x, y, dx, dy, dash, -space
             ))
 
         self.hatch_lines = hatch_lines
