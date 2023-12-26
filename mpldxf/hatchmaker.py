@@ -187,19 +187,28 @@ class HatchMaker:
     pat_description: str = 'description'
 
     @staticmethod
-    def read_pat_as_df(path):
+    def read_pat_str_as_df(pat_str):
         # useful for testing
         s_ = ''
-        with open(path, 'r') as f:
-            for x in f:
-                if x.startswith((';', '*')) or x == '\n':
-                    continue
-                s_ += x
+        for x in pat_str.splitlines():
+            if x.startswith((';', '*')) or x == '\n':
+                continue
+            s_ += x
         df = pd.read_csv(
             io.StringIO(s_),
             header=None,
         )
-        df.columns = ['angle', 'x', 'y', 'shift', 'offset', 'dash', 'space']
+        df.columns = ['angle', 'x', 'y', 'shift', 'offset', 'dash', 'space'][:len(df.columns)]
+        return df
+
+    @staticmethod
+    def read_pat_as_df(path):
+        # useful for testing
+        with open(path, 'r') as f:
+            pat_str = f.read()
+        df = HatchMaker.read_pat_str_as_df(
+            pat_str
+        )
         return df
 
     @staticmethod
