@@ -30,8 +30,9 @@ def get_df(canvas_width):
     return df
 
 
-canvas_widths = np.arange(0.1, 4 + 0.01, 0.01)
-# canvas_widths = [0.1, 0.14, 0.2, 0.3]
+# pattycake won't accept canvas width values less than 0.125!
+canvas_widths = np.arange(0.13, 4 + 0.01, 0.01)
+# canvas_widths = [0.125, 0.14, 0.2, 0.3]
 dfs = {}
 for canvas_width in canvas_widths:
     canvas_width = round(canvas_width, 3)
