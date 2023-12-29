@@ -9,11 +9,17 @@ from fractions import Fraction
 gw.getWindowsWithTitle('- Pattycake')[0].maximize()
 
 
-def get_df(canvas_width):
+def get_df(canvas_width, canvas_dimension_is):
     # click on advanced settings
     pg.click(1043, 215)
-    # click on canvas width field
-    pg.click(804, 349)
+    if canvas_dimension_is == 'width':
+        # click on canvas width field
+        pg.click(804, 349)
+    elif canvas_dimension_is == 'height':
+        # click on canvas height field
+        pg.click(804, 383)
+    else:
+        raise Exception(f'{canvas_dimension_is=} not valid')
     # select all
     pg.hotkey('ctrl', 'a')
     pg.typewrite(str(canvas_width))
@@ -30,21 +36,21 @@ def get_df(canvas_width):
     return df
 
 
-# pattycake won't accept canvas width values less than 0.125!
-canvas_widths = np.arange(0.13, 4 + 0.01, 0.01)
-# canvas_widths = [0.125, 0.14, 0.2, 0.3]
+# pattycake won't accept canvas width or height values less than 0.125!
+canvas_dimensions = np.arange(0.13, 4 + 0.01, 0.01)
+canvas_dimension_is = 'height'
+# canvas_dimensions = [0.125, 0.14, 0.2, 0.3]
 dfs = {}
-for canvas_width in canvas_widths:
-    canvas_width = round(canvas_width, 3)
+for canvas_dimension in canvas_dimensions:
+    canvas_dimension = round(canvas_dimension, 3)
 
     try:
-        df = get_df(canvas_width)
+        df = get_df(canvas_dimension, canvas_dimension_is=canvas_dimension_is)
     except pd.errors.EmptyDataError as e:
         df = pd.DataFrame([{'angle': np.nan}])
 
-    dfs[canvas_width] = df
-dfs = pd.concat(dfs, names=['canvas_width']).droplevel(1)
-print(dfs)
+    dfs[canvas_dimension] = df
+dfs = pd.concat(dfs, names=[f'canvas_{canvas_dimension_is}']).droplevel(1)
 dfs['d'] = dfs['dash'] + dfs['space'].abs()
 angle = dfs['angle'].iloc[0]
 angle_rad = np.deg2rad(angle)
@@ -54,5 +60,5 @@ angle_fraction = Fraction(tan_angle).limit_denominator(max_denominator=100)
 dfs['d_y'] = sin_angle * dfs['d']
 dfs['d_x'] = dfs['d_y'] / tan_angle
 dfs['multiplier'] = dfs['d_x'] / angle_fraction.denominator
-dfs.to_excel('canvas_widths_pats.xlsx')
+dfs.to_excel(f'canvas_{canvas_dimension_is}s_pats.xlsx')
 print(dfs)
