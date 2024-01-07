@@ -3,6 +3,8 @@ import pandas as pd
 from mpldxf.hatchmaker import HatchMaker, clean_pat_title
 
 bp = 'dxf hatch pattern templating'
+
+
 def show_canvas_effect():
     df_map = {}
     canvas_list = [
@@ -69,3 +71,23 @@ for canvas in [
     print(hm.to_pat_str())
     pat_fname = clean_pat_title(f'5x5StarBurst{canvas_width}_{canvas_height}')
     hm.to_dxf()
+
+hm = HatchMaker().set_from_points(
+    [
+        (0, 0),
+        (0, 0),
+        (0, 0),
+        (0, 0),
+    ],
+    [
+        (0.5, 0.2),
+        (2, 0.3),
+        (0.113, 0.993),
+        (0.985, 0.174),
+    ],
+    canvas_width=1.13,
+    canvas_height=0.51,
+    round_decimals=4
+)
+print(hm)
+hm.to_dxf()

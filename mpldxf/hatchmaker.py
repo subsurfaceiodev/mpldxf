@@ -69,7 +69,8 @@ def get_angle_offsets(
         # TODO decide if angle_corrected should go to actual pat definition instead of
         #  angle, similar to pattycake
         angle_corrected = np.arctan(float(tan_angle_abs_fraction))
-        logging.debug(f'line at angle {tan_angle_abs_fraction=}')
+        angle_corrected_degrees = np.rad2deg(angle_corrected)
+        logging.debug(f'line at {angle_corrected_degrees=} {tan_angle_abs_fraction=}')
 
         def line_equation_handler(b=0, solve_at=1):
             start_time = default_timer()
@@ -326,24 +327,3 @@ def get_clockwise_angle(x_distance, y_distance):
     angle = np.arctan2(y_distance, x_distance)
     angle[angle < 0] = 2 * pi + angle[angle < 0]
     return angle
-
-
-hm = HatchMaker().set_from_points(
-    [
-        (0, 0),
-        (0, 0),
-        (0, 0),
-        (0, 0),
-    ],
-    [
-        (0.5, 0.2),
-        (2, 0.3),
-        (0.113, 0.993),
-        (0.985, 0.174),
-    ],
-    canvas_width=1.13,
-    canvas_height=0.51,
-    round_decimals=4
-)
-print(hm)
-hm.to_dxf()
