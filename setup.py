@@ -59,6 +59,9 @@ setup(
     install_requires=[
         "ezdxf>0.6.5",
         "matplotlib",
+        "sympy",
+        "numpy",
+        "pandas"
     ],
     dependency_links=[
         'hg+https://bitbucket.org/mozman/ezdxf@default#egg=ezdxf-0.7.0alpha',

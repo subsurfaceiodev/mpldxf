@@ -3,7 +3,9 @@ from warnings import warn
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import Iterable
-
+import logging
+from sympy.solvers.diophantine.diophantine import diop_linear
+from sympy import symbols, nsimplify, sqrt
 import io
 import ezdxf
 import numpy as np
@@ -11,6 +13,7 @@ import pandas as pd
 
 pi = np.pi
 PAT_UNITS_MAP = {'Millimeters': 'MM', 'Inches': 'INCH'}
+logging.basicConfig(level=logging.DEBUG)
 
 
 def rotate(p, origin=(0, 0), angle=0):
@@ -40,9 +43,8 @@ def float_to_fraction(
 def get_angle_offsets(
         angle,
         round_decimals=4,
-        canvas_width=1,
-        canvas_height=1,
-        print_log=False,
+        canvas_width=1.0,
+        canvas_height=1.0,
 ):
     def integer_check(x, y):
         x_rounded = round(float(x), round_decimals)
@@ -50,61 +52,82 @@ def get_angle_offsets(
         if x_rounded.is_integer() and y_rounded.is_integer():
             return x, y
 
-    # seems to work as a rule of thumb
-    if round_decimals > 4:
-        dx_max_iterations = 50000
-    else:
-        dx_max_iterations = 5000
-
     angle_degrees = np.rad2deg(angle)
     tan_angle = np.tan(angle)
     tan_angle_abs = abs(tan_angle)
 
     canvas_ratio = canvas_height / canvas_width
 
-    log = f'--------------\nCalculation started for {angle_degrees=} {tan_angle=}\n'
-
+    logging.debug(f'Calculation started for {angle_degrees=} {tan_angle=}')
     if tan_angle_abs > 1.0e+5:
-        # vertical line
-        log += 'vertical line\n'
+        logging.debug('vertical line')
         dx, dy, d = 0, canvas_width, canvas_height
     elif np.isclose(tan_angle_abs, 0):
-        # horizontal line
-        log += 'horizontal line\n'
+        logging.debug('horizontal line')
         dx, dy, d = 0, canvas_height, canvas_width
     elif np.isclose(tan_angle_abs, 1) and np.isclose(canvas_ratio, 1):
-        log += '45 degrees line\n'
+        logging.debug('45 degrees line')
         d = np.sqrt(canvas_width ** 2 + canvas_height ** 2)
         dx = d / 2
         dy = -dx
     else:
         tan_angle_abs_fraction = float_to_fraction(tan_angle_abs, round_decimals=round_decimals)
-        tan_angle_abs_numerator = tan_angle_abs_fraction.numerator
-        tan_angle_abs_denominator = tan_angle_abs_fraction.denominator
-        canvas_ratio_to_tan_angle_abs_ratio = canvas_ratio / tan_angle_abs
+        # TODO decide if angle_corrected should go to actual pat definition instead of
+        #  angle, similar to pattycake
+        angle_corrected = np.arctan(float(tan_angle_abs_fraction))
+        logging.debug(f'line at angle {tan_angle_abs_fraction=}')
 
-        log += f'line at angle {tan_angle_abs_fraction=}\n'
-
-        def get_x_y():
-            # tan_angle = OPP / ADJ
-            # if tan_angle > 1 then OPP > ADJ
-            # if tan_angle < 1 then OPP < ADJ
-            multiplier = float_to_fraction(
-                canvas_ratio_to_tan_angle_abs_ratio,
-                round_decimals=round_decimals,
-            ).denominator / tan_angle_abs_numerator * canvas_height
-            x_ = tan_angle_abs_numerator * multiplier
-            y_ = tan_angle_abs_denominator * multiplier
-            return x_, y_
+        def line_equation_handler(b=0, solve_at=1):
+            x, y, t = symbols('x, y, t_0', integer=True)
+            # line_equation: y = mx + b
+            line_equation = canvas_width * tan_angle_abs_fraction * x + b - canvas_height * y
+            # convert all floats to fractions:
+            line_equation = nsimplify(line_equation, tolerance=0.0000001)
+            # convert all coefficients to integers from the
+            # least common multiple of fraction denominators
+            line_equation_integer = line_equation.as_numer_denom()[0]
+            # from https://en.wikipedia.org/wiki/Diophantine_equation:
+            # Finding all right triangles with integer side-lengths is
+            # equivalent to solving the Diophantine equation
+            diophantine_solution = diop_linear(line_equation_integer)
+            logging.debug(f'{line_equation=}, {line_equation_integer=}, {diophantine_solution=}')
+            x, y = diophantine_solution.subs({t: solve_at})
+            x, y = x * canvas_width, y * canvas_height
+            d = sqrt(x ** 2 + (y - b) ** 2)
+            logging.debug(f'{x=} {y=} {d=}')
+            return x, y, d
 
         canvas_factor = canvas_width * canvas_height
-        x, y = get_x_y()
-        d = np.sqrt(x ** 2 + y ** 2)
-        log += f'{x=} {y=} {d=}'
+        _, _, d = line_equation_handler()
         tan_angle_sign = np.sign(tan_angle)
         dy = tan_angle_sign * canvas_factor / d
 
-        def get_dx(angle, dy):
+        def get_dx(
+                angle,
+                dy,
+        ):
+            b = dy / abs(np.cos(angle_corrected))
+            # if solution == (None, None):
+            #     raise Exception('solution not possible')
+            # x, y = solution.subs({t: 0})
+            # if x == 0 and y == 0:
+            #     raise Exception('solution not possible')
+            # x, y = float(x * canvas_width), float(y * canvas_height)
+            # print(f'{x=}, {y=}')
+            # d_ = sqrt(x ** 2 + (y - b) ** 2)
+            x, y, d = line_equation_handler(b, solve_at=0)
+            if x != 0:
+                dy *= np.sign(x)
+            d__ = dy * tan_angle_abs_fraction
+            dx = d + d__
+            return dx, dy
+
+        def get_dx_brute(angle, dy):
+            # seems to work as a rule of thumb
+            if round_decimals > 4:
+                dx_max_iterations = 50000
+            else:
+                dx_max_iterations = 5000
             # TODO maybe its better to check if each point in iteration is multiple of base point?
             #  view asterisk guide
             #  one could get blue line equation and evaluate with x+basepointx
@@ -130,70 +153,20 @@ def get_angle_offsets(
                     dy_line_equation_y_intercept *= -1
                     checked = checked_dy_negative
                 if x_ > dx_max_iterations:
-                    if print_log:
-                        print(log)
                     raise StopIteration('max iter reached')
                 elif checked is None:
                     x_ += canvas_width
                 else:
-                    from z3 import Ints, solve, Q
-                    from decimal import Decimal
-                    x, y = Ints('x y')
-                    m = float_to_fraction(canvas_width * tan_angle_abs, round_decimals=round_decimals)
-                    b = 1/4925
-                    b = Q(1, 4925)
-                    print(m)
-                    m = Fraction(17.4 / 985).limit_denominator(10000)
-                    print(m)
-                    # m = 87/4925
-                    # m = Q(87, 4925)
-                    m = Q(m.numerator, m.denominator)
-                    print(m)
-                    print(Fraction(dy_line_equation_y_intercept).limit_denominator(100000))
-                    # cwf = Product(174, canvas_width)
-                    # cwf = round(174 * 0.1, 5)
-                    solve(x >= 0, y >= 0, canvas_height * y == m * x + b)
-                    # print('AAAAAAAAAAAAA')
-                    # fraction_1 = Fraction(5000/dy_line_equation(5000, b=dy_line_equation_y_intercept)).limit_denominator(100)
-                    # fraction_2 = Fraction(5000/dy_line_equation(5000, b=-dy_line_equation_y_intercept)).limit_denominator(100)
-                    # # print(tan_angle_abs_fraction)
-                    # print(fraction_1)
-                    # print(fraction_2)
-                    # x_at_y_equals_1_a = (1 - dy_line_equation_y_intercept) / tan_angle_abs
-                    # x_at_y_equals_1_b = (1 - - dy_line_equation_y_intercept) / tan_angle_abs
-                    # print(x_at_y_equals_1_a)
-                    # print(x_at_y_equals_1_b)
-                    # print(float_to_fraction(x_at_y_equals_1_a, round_decimals=round_decimals))
-                    # print(float_to_fraction(x_at_y_equals_1_b, round_decimals=round_decimals))
-                    print(f'{dy=} {tan_angle_abs=} {dy_line_equation_y_intercept=} {x_=} {y_=}')
-                    # from sympy.solvers.diophantine.diophantine import diop_linear
-                    # from sympy import symbols
-                    #
-                    # x, y, t = symbols('x, y, t_0', integer=True)
-                    # print(f'{tan_angle_abs_numerator=}, {tan_angle_abs_denominator=}')
-                    # try:
-                    #     res = diop_linear(
-                    #         tan_angle_abs_numerator * x -
-                    #         tan_angle_abs_denominator * y + 1
-                    #     )
-                    #     print(res)
-                    #     x__, y__ = res.subs({t: 0})
-                    #     print(f'{canvas_width=} {canvas_height=}, {x_=} {x__=}, {y_=} {y__=}')
-                    #     assert round(abs(x_), round_decimals) == abs(x__)
-                    #     assert round(abs(y_), round_decimals) == abs(y__)
-                    # except Exception as e:
-                    #     print('Error!')
-
-                    # print(dy / abs(np.sin(angle)))
                     d_ = np.sqrt(x_ ** 2 + (y_ - dy_line_equation_y_intercept) ** 2)
                     d__ = dy * tan_angle_abs
                     dx = d_ + d__
                     return dx, dy
 
-        dx, dy = get_dx(angle, abs(dy))
+        dx, dy = get_dx(
+            angle,
+            dy
+        )
         dy *= tan_angle_sign
-    if print_log:
-        print(log)
     return dx, dy, d
 
 
@@ -285,8 +258,8 @@ class HatchMaker:
             p0,
             p1,
             round_decimals=4,  # < 5 prevents invalid angles
-            canvas_width=1,
-            canvas_height=1,
+            canvas_width=1.0,
+            canvas_height=1.0,
     ):
         p0 = np.round(p0, round_decimals)
         p1 = np.round(p1, round_decimals)
@@ -316,11 +289,12 @@ class HatchMaker:
                     round_decimals=round_decimals,
                     canvas_width=canvas_width,
                     canvas_height=canvas_height,
-                    print_log=True,
                 )
-            except StopIteration:
-                warn(f'line with {angle_degrees=} {x=} {y=} reached maximum iterations')
+            except Exception as e:
+                e.add_note(f'line with {angle_degrees=} {x=} {y=}')
+                logging.exception(e)
                 continue
+
             space = d - dash
             hatch_lines.append(HatchLine(
                 angle_degrees, x, y, dx, dy, dash, -space
@@ -403,11 +377,15 @@ def get_clockwise_angle(x_distance, y_distance):
     return angle
 
 
-# print(HatchMaker().set_from_points([(0, 0)], [(2, 0.3)]))  # TODO
-print(HatchMaker().set_from_points(
+hm = HatchMaker().set_from_points(
     [(0, 0)],
-    # [(2, 5)],
-    [(985, 174)],
-    canvas_width=0.1,
-    canvas_height=0.5,
-))  # TODO
+    # [(0.5, 0.2)],
+    # [(985, 174)],
+    [(2, 0.3)],
+    # [(0.113, 0.993)],
+    canvas_width=1.13,
+    canvas_height=0.51,
+    round_decimals=4
+)
+print(hm)
+hm.to_dxf()
