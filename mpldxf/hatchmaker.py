@@ -29,11 +29,11 @@ def clean_pat_title(pat_title, software='AutoCAD'):
     return pat_title
 
 
-def get_multiplier(
+def float_to_fraction(
         value,
         round_decimals,
 ):
-    multiplier = Fraction(value).limit_denominator(max_denominator=10 ** round_decimals).denominator
+    multiplier = Fraction(value).limit_denominator(max_denominator=10 ** round_decimals)
     return multiplier
 
 
@@ -59,6 +59,9 @@ def get_angle_offsets(
     angle_degrees = np.rad2deg(angle)
     tan_angle = np.tan(angle)
     tan_angle_abs = abs(tan_angle)
+
+    canvas_ratio = canvas_height / canvas_width
+
     log = f'--------------\nCalculation started for {angle_degrees=} {tan_angle=}\n'
 
     if tan_angle_abs > 1.0e+5:
@@ -69,39 +72,29 @@ def get_angle_offsets(
         # horizontal line
         log += 'horizontal line\n'
         dx, dy, d = 0, canvas_height, canvas_width
-    elif np.isclose(tan_angle_abs, 1) and np.isclose(canvas_width / canvas_height, 1):
+    elif np.isclose(tan_angle_abs, 1) and np.isclose(canvas_ratio, 1):
         log += '45 degrees line\n'
         d = np.sqrt(canvas_width ** 2 + canvas_height ** 2)
         dx = d / 2
         dy = -dx
     else:
-        log += 'line at angle\n'
+        tan_angle_abs_fraction = float_to_fraction(tan_angle_abs, round_decimals=round_decimals)
+        tan_angle_abs_numerator = tan_angle_abs_fraction.numerator
+        tan_angle_abs_denominator = tan_angle_abs_fraction.denominator
+        canvas_ratio_to_tan_angle_abs_ratio = canvas_ratio / tan_angle_abs
+
+        log += f'line at angle {tan_angle_abs_fraction=}\n'
 
         def get_x_y():
             # tan_angle = OPP / ADJ
             # if tan_angle > 1 then OPP > ADJ
             # if tan_angle < 1 then OPP < ADJ
-            # TODO check effect of canvas_width > canvas_height on asterisk sample
-            # 0.5 vs 1 and 2 vs 1
-            if tan_angle_abs < 1:
-                x = 1 / tan_angle_abs
-                y = 1
-                non_unit_var = x / canvas_factor
-            else:
-                x = 1
-                y = tan_angle_abs
-                non_unit_var = y / canvas_factor
-            # checked = integer_check(x * canvas_factor, y * canvas_factor)
-            # if checked is not None:
-            #     return checked
-            # else:
-            multiplier = get_multiplier(
-                non_unit_var,
+            multiplier = float_to_fraction(
+                canvas_ratio_to_tan_angle_abs_ratio,
                 round_decimals=round_decimals,
-            )
-            print(f'{x=} {y=} {multiplier=}')
-            x_ = x * multiplier
-            y_ = y * multiplier
+            ).denominator / tan_angle_abs_numerator * canvas_height
+            x_ = tan_angle_abs_numerator * multiplier
+            y_ = tan_angle_abs_denominator * multiplier
             return x_, y_
 
         canvas_factor = canvas_width * canvas_height
@@ -119,14 +112,14 @@ def get_angle_offsets(
             dy_line_equation_y_intercept = dy / abs(np.cos(angle))
 
             # dy line equation
-            def dy_line_equation(x):
-                y = tan_angle_abs * x + dy_line_equation_y_intercept
+            def dy_line_equation(x, b):
+                y = tan_angle_abs * x + b
                 # print(angle, x, dy_line_equation_y_intercept, tan_angle, y)
                 return y
 
             x_ = 0
             while True:
-                y_ = dy_line_equation(x_)
+                y_ = dy_line_equation(x_, b=dy_line_equation_y_intercept)
                 checked = integer_check(x_ / canvas_width, y_ / canvas_height)
                 y_dy_negative = y_ - dy_line_equation_y_intercept * 2
                 checked_dy_negative = integer_check(x_ / canvas_width, y_dy_negative / canvas_height)
@@ -143,6 +136,55 @@ def get_angle_offsets(
                 elif checked is None:
                     x_ += canvas_width
                 else:
+                    from z3 import Ints, solve, Q
+                    from decimal import Decimal
+                    x, y = Ints('x y')
+                    m = float_to_fraction(canvas_width * tan_angle_abs, round_decimals=round_decimals)
+                    b = 1/4925
+                    b = Q(1, 4925)
+                    print(m)
+                    m = Fraction(17.4 / 985).limit_denominator(10000)
+                    print(m)
+                    # m = 87/4925
+                    # m = Q(87, 4925)
+                    m = Q(m.numerator, m.denominator)
+                    print(m)
+                    print(Fraction(dy_line_equation_y_intercept).limit_denominator(100000))
+                    # cwf = Product(174, canvas_width)
+                    # cwf = round(174 * 0.1, 5)
+                    solve(x >= 0, y >= 0, canvas_height * y == m * x + b)
+                    # print('AAAAAAAAAAAAA')
+                    # fraction_1 = Fraction(5000/dy_line_equation(5000, b=dy_line_equation_y_intercept)).limit_denominator(100)
+                    # fraction_2 = Fraction(5000/dy_line_equation(5000, b=-dy_line_equation_y_intercept)).limit_denominator(100)
+                    # # print(tan_angle_abs_fraction)
+                    # print(fraction_1)
+                    # print(fraction_2)
+                    # x_at_y_equals_1_a = (1 - dy_line_equation_y_intercept) / tan_angle_abs
+                    # x_at_y_equals_1_b = (1 - - dy_line_equation_y_intercept) / tan_angle_abs
+                    # print(x_at_y_equals_1_a)
+                    # print(x_at_y_equals_1_b)
+                    # print(float_to_fraction(x_at_y_equals_1_a, round_decimals=round_decimals))
+                    # print(float_to_fraction(x_at_y_equals_1_b, round_decimals=round_decimals))
+                    print(f'{dy=} {tan_angle_abs=} {dy_line_equation_y_intercept=} {x_=} {y_=}')
+                    # from sympy.solvers.diophantine.diophantine import diop_linear
+                    # from sympy import symbols
+                    #
+                    # x, y, t = symbols('x, y, t_0', integer=True)
+                    # print(f'{tan_angle_abs_numerator=}, {tan_angle_abs_denominator=}')
+                    # try:
+                    #     res = diop_linear(
+                    #         tan_angle_abs_numerator * x -
+                    #         tan_angle_abs_denominator * y + 1
+                    #     )
+                    #     print(res)
+                    #     x__, y__ = res.subs({t: 0})
+                    #     print(f'{canvas_width=} {canvas_height=}, {x_=} {x__=}, {y_=} {y__=}')
+                    #     assert round(abs(x_), round_decimals) == abs(x__)
+                    #     assert round(abs(y_), round_decimals) == abs(y__)
+                    # except Exception as e:
+                    #     print('Error!')
+
+                    # print(dy / abs(np.sin(angle)))
                     d_ = np.sqrt(x_ ** 2 + (y_ - dy_line_equation_y_intercept) ** 2)
                     d__ = dy * tan_angle_abs
                     dx = d_ + d__
@@ -189,13 +231,16 @@ class HatchMaker:
     @staticmethod
     def read_pat_str_as_df(pat_str):
         # useful for testing
-        s_ = ''
+        s_ = []
         for x in pat_str.splitlines():
-            if x.startswith((';', '*')) or x == '\n':
+            if x == '' or x.startswith((';', '*')) or x == '\n':
                 continue
-            s_ += x
+            s_.append(x)
+        s_ = '\n'.join(s_)
+
         df = pd.read_csv(
             io.StringIO(s_),
+            skipinitialspace=True,
             header=None,
         )
         df.columns = ['angle', 'x', 'y', 'shift', 'offset', 'dash', 'space'][:len(df.columns)]
@@ -356,3 +401,13 @@ def get_clockwise_angle(x_distance, y_distance):
     angle = np.arctan2(y_distance, x_distance)
     angle[angle < 0] = 2 * pi + angle[angle < 0]
     return angle
+
+
+# print(HatchMaker().set_from_points([(0, 0)], [(2, 0.3)]))  # TODO
+print(HatchMaker().set_from_points(
+    [(0, 0)],
+    # [(2, 5)],
+    [(985, 174)],
+    canvas_width=0.1,
+    canvas_height=0.5,
+))  # TODO

@@ -32,10 +32,11 @@ def show_canvas_effect():
 # show_canvas_effect()
 
 for canvas in [
-    (0.5, 1),
+    # (0.5, 1),
     (1, 1),
     (2, 1),
-    # (1, 2),
+    (1, 2),
+    (3, 1.5),
 ]:
     canvas_width, canvas_height = canvas
     hm = HatchMaker(
@@ -49,7 +50,7 @@ for canvas in [
             (0.0938, 0.1875),
             (0.0938, 0.3125),
             (0.3125, 0.4063),
-            (0.1875, 0.4063)
+            (0.1875, 0.4063),
         ],
         [
             (0.25, 0.0313),
@@ -59,7 +60,7 @@ for canvas in [
             (0.4063, 0.3125),
             (0.4063, 0.1875),
             (0.1875, 0.0938),
-            (0.3125, 0.0938)
+            (0.3125, 0.0938),
         ],
         canvas_width=canvas_width,
         canvas_height=canvas_height,
@@ -74,6 +75,6 @@ for canvas in [
     # }
     # expected = expected_map['1.50X1.00']
     pat_fname = clean_pat_title(f'5x5StarBurst{canvas_width}_{canvas_height}')
-    df = HatchMaker.read_pat_as_df(f'{bp}/{pat_fname}.pat')
-    print(df)
+    # df = HatchMaker.read_pat_as_df(f'{bp}/{pat_fname}.pat')
+    # print(df)
     hm.to_dxf()
