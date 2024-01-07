@@ -1,5 +1,5 @@
 import re
-from warnings import warn
+from timeit import default_timer
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import Iterable
@@ -46,12 +46,6 @@ def get_angle_offsets(
         canvas_width=1.0,
         canvas_height=1.0,
 ):
-    def integer_check(x, y):
-        x_rounded = round(float(x), round_decimals)
-        y_rounded = round(float(y), round_decimals)
-        if x_rounded.is_integer() and y_rounded.is_integer():
-            return x, y
-
     angle_degrees = np.rad2deg(angle)
     tan_angle = np.tan(angle)
     tan_angle_abs = abs(tan_angle)
@@ -78,11 +72,12 @@ def get_angle_offsets(
         logging.debug(f'line at angle {tan_angle_abs_fraction=}')
 
         def line_equation_handler(b=0, solve_at=1):
+            start_time = default_timer()
             x, y, t = symbols('x, y, t_0', integer=True)
             # line_equation: y = mx + b
             line_equation = canvas_width * tan_angle_abs_fraction * x + b - canvas_height * y
             # convert all floats to fractions:
-            line_equation = nsimplify(line_equation, tolerance=0.0000001)
+            line_equation = nsimplify(line_equation, tolerance=0.00001)
             # convert all coefficients to integers from the
             # least common multiple of fraction denominators
             line_equation_integer = line_equation.as_numer_denom()[0]
@@ -90,10 +85,16 @@ def get_angle_offsets(
             # Finding all right triangles with integer side-lengths is
             # equivalent to solving the Diophantine equation
             diophantine_solution = diop_linear(line_equation_integer)
+            execution_time = default_timer() - start_time
+            logging.debug(f'{execution_time=}')
             logging.debug(f'{line_equation=}, {line_equation_integer=}, {diophantine_solution=}')
+            if diophantine_solution == (None, None):
+                raise Exception('solution not possible')
             x, y = diophantine_solution.subs({t: solve_at})
+            if x == 0 and y == 0:
+                raise Exception('solution not possible')
             x, y = x * canvas_width, y * canvas_height
-            d = sqrt(x ** 2 + (y - b) ** 2)
+            d = float(sqrt(x ** 2 + (y - b) ** 2))
             logging.debug(f'{x=} {y=} {d=}')
             return x, y, d
 
@@ -103,18 +104,9 @@ def get_angle_offsets(
         dy = tan_angle_sign * canvas_factor / d
 
         def get_dx(
-                angle,
                 dy,
         ):
             b = dy / abs(np.cos(angle_corrected))
-            # if solution == (None, None):
-            #     raise Exception('solution not possible')
-            # x, y = solution.subs({t: 0})
-            # if x == 0 and y == 0:
-            #     raise Exception('solution not possible')
-            # x, y = float(x * canvas_width), float(y * canvas_height)
-            # print(f'{x=}, {y=}')
-            # d_ = sqrt(x ** 2 + (y - b) ** 2)
             x, y, d = line_equation_handler(b, solve_at=0)
             if x != 0:
                 dy *= np.sign(x)
@@ -122,48 +114,7 @@ def get_angle_offsets(
             dx = d + d__
             return dx, dy
 
-        def get_dx_brute(angle, dy):
-            # seems to work as a rule of thumb
-            if round_decimals > 4:
-                dx_max_iterations = 50000
-            else:
-                dx_max_iterations = 5000
-            # TODO maybe its better to check if each point in iteration is multiple of base point?
-            #  view asterisk guide
-            #  one could get blue line equation and evaluate with x+basepointx
-            #  also maybe use get_multiplier directly
-            dy_line_equation_y_intercept = dy / abs(np.cos(angle))
-
-            # dy line equation
-            def dy_line_equation(x, b):
-                y = tan_angle_abs * x + b
-                # print(angle, x, dy_line_equation_y_intercept, tan_angle, y)
-                return y
-
-            x_ = 0
-            while True:
-                y_ = dy_line_equation(x_, b=dy_line_equation_y_intercept)
-                checked = integer_check(x_ / canvas_width, y_ / canvas_height)
-                y_dy_negative = y_ - dy_line_equation_y_intercept * 2
-                checked_dy_negative = integer_check(x_ / canvas_width, y_dy_negative / canvas_height)
-                if checked_dy_negative is not None:
-                    # TODO for asterisk findings
-                    y_ = y_dy_negative
-                    dy = -dy
-                    dy_line_equation_y_intercept *= -1
-                    checked = checked_dy_negative
-                if x_ > dx_max_iterations:
-                    raise StopIteration('max iter reached')
-                elif checked is None:
-                    x_ += canvas_width
-                else:
-                    d_ = np.sqrt(x_ ** 2 + (y_ - dy_line_equation_y_intercept) ** 2)
-                    d__ = dy * tan_angle_abs
-                    dx = d_ + d__
-                    return dx, dy
-
         dx, dy = get_dx(
-            angle,
             dy
         )
         dy *= tan_angle_sign
@@ -378,11 +329,18 @@ def get_clockwise_angle(x_distance, y_distance):
 
 
 hm = HatchMaker().set_from_points(
-    [(0, 0)],
-    # [(0.5, 0.2)],
-    # [(985, 174)],
-    [(2, 0.3)],
-    # [(0.113, 0.993)],
+    [
+        (0, 0),
+        (0, 0),
+        (0, 0),
+        (0, 0),
+    ],
+    [
+        (0.5, 0.2),
+        (2, 0.3),
+        (0.113, 0.993),
+        (0.985, 0.174),
+    ],
     canvas_width=1.13,
     canvas_height=0.51,
     round_decimals=4

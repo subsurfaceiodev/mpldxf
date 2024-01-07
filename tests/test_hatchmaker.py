@@ -80,7 +80,7 @@ def test_multiple_angles(angle_step):
     p0 = [(0, 0)] * len(p1)
     hm = HatchMaker(pat_title=f'test_multiple_angles_{angle_step=}').set_from_points(
         p0, p1,
-        canvas_height=0.51,
+        canvas_height=1,
         round_decimals=4
     )
     hm.to_dxf()
