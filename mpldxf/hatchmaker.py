@@ -5,15 +5,16 @@ from fractions import Fraction
 from typing import Iterable
 import logging
 from sympy.solvers.diophantine.diophantine import diop_linear
-from sympy import symbols, nsimplify, sqrt
+from sympy import symbols, nsimplify
 import io
 import ezdxf
 import numpy as np
 import pandas as pd
+from math import lcm
 
 pi = np.pi
 PAT_UNITS_MAP = {'Millimeters': 'MM', 'Inches': 'INCH'}
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.WARNING)  # set to DEBUG for debugging
 
 
 def rotate(p, origin=(0, 0), angle=0):
@@ -72,32 +73,61 @@ def get_angle_offsets(
         angle_corrected_degrees = np.rad2deg(angle_corrected)
         logging.debug(f'line at {angle_corrected_degrees=} {tan_angle_abs_fraction=}')
 
-        def line_equation_handler(b=0, solve_at=1):
-            start_time = default_timer()
-            x, y, t = symbols('x, y, t_0', integer=True)
+        def line_equation_handler(c=0, solve_at=1):
+            method = 'ssio'
             # line_equation: y = mx + b
-            line_equation = canvas_width * tan_angle_abs_fraction * x + b - canvas_height * y
-            # convert all floats to fractions:
-            line_equation = nsimplify(line_equation, tolerance=0.00001)
-            # convert all coefficients to integers from the
-            # least common multiple of fraction denominators
-            line_equation_integer = line_equation.as_numer_denom()[0]
+            # linear diophantine equation: ax + by = c
+            a = canvas_width * tan_angle_abs_fraction
+            b = canvas_height
+            c = c
+            x, y, t = symbols('x, y, t_0', integer=True)
+
+            start_time = default_timer()
+            if method == 'sympy':
+                # this method is slow, was created mainly to validate ssio method
+                line_equation = a * x + c - b * y
+                # convert all floats to fractions:
+                line_equation_rational = nsimplify(line_equation, rational=True, tolerance=0.00001)
+                # convert all coefficients to integers from the
+                # least common multiple of fraction denominators
+                line_equation_integer = line_equation_rational.as_numer_denom()[0]
+            elif method == 'ssio':
+                line_equation = f'{a} * x + {c} - {b} * y'
+                a_rational = float_to_fraction(a, 5)
+                b_rational = float_to_fraction(b, 5)
+                c_rational = float_to_fraction(c, 5)
+                line_equation_rational = f'{a_rational} * x + {c_rational} - {b_rational} * y'
+                line_equation_lcm = lcm(
+                    a_rational.denominator,
+                    b_rational.denominator,
+                    c_rational.denominator
+                )
+                a_int = line_equation_lcm * a_rational
+                b_int = line_equation_lcm * b_rational
+                c_int = line_equation_lcm * c_rational
+                line_equation_integer = a_int * x + c_int - b_int * y
+            else:
+                raise Exception(f'{method=} not valid')
+
             # from https://en.wikipedia.org/wiki/Diophantine_equation:
             # Finding all right triangles with integer side-lengths is
             # equivalent to solving the Diophantine equation
             diophantine_solution = diop_linear(line_equation_integer)
+
             execution_time = default_timer() - start_time
             logging.debug(f'{execution_time=}')
-            logging.debug(f'{line_equation=}, {line_equation_integer=}, {diophantine_solution=}')
+            logging.debug(
+                f'{line_equation=}, {line_equation_rational=}, {line_equation_integer=}, {diophantine_solution=}')
             if diophantine_solution == (None, None):
                 raise Exception('solution not possible')
-            x, y = diophantine_solution.subs({t: solve_at})
-            if x == 0 and y == 0:
+            x_int, y_int = diophantine_solution.subs({t: solve_at})
+            logging.debug(f'{x_int=} {y_int=}')
+            if x_int == 0 and y_int == 0:
                 raise Exception('solution not possible')
-            x, y = x * canvas_width, y * canvas_height
-            d = float(sqrt(x ** 2 + (y - b) ** 2))
-            logging.debug(f'{x=} {y=} {d=}')
-            return x, y, d
+            x_float, y_float = float(x_int * canvas_width), float(y_int * canvas_height)
+            d = np.sqrt(x_float ** 2 + (y_float - c) ** 2)
+            logging.debug(f'{x_float=} {y_float=} {d=}')
+            return x_float, y_float, d
 
         canvas_factor = canvas_width * canvas_height
         _, _, d = line_equation_handler()
@@ -107,8 +137,8 @@ def get_angle_offsets(
         def get_dx(
                 dy,
         ):
-            b = dy / abs(np.cos(angle_corrected))
-            x, y, d = line_equation_handler(b, solve_at=0)
+            c = dy / abs(np.cos(angle_corrected))
+            x, y, d = line_equation_handler(c, solve_at=0)
             if x != 0:
                 dy *= np.sign(x)
             d__ = dy * tan_angle_abs_fraction
@@ -195,6 +225,8 @@ class HatchMaker:
             self,
             frame,
             round_decimals=4,
+            canvas_width=1.0,
+            canvas_height=1.0,
     ):
         p0 = list(zip(frame['x0'], frame['y0']))
         p1 = list(zip(frame['x1'], frame['y1']))
@@ -202,6 +234,8 @@ class HatchMaker:
             p0,
             p1,
             round_decimals,
+            canvas_width,
+            canvas_height,
         )
         return self
 
