@@ -5,12 +5,13 @@ from fractions import Fraction
 from typing import Iterable
 import logging
 from sympy.solvers.diophantine.diophantine import diop_linear
+from sympy.core.containers import Tuple
 from sympy import symbols, nsimplify
 import io
 import ezdxf
 import numpy as np
 import pandas as pd
-from math import lcm
+from math import lcm, gcd
 
 pi = np.pi
 PAT_UNITS_MAP = {'Millimeters': 'MM', 'Inches': 'INCH'}
@@ -81,6 +82,7 @@ def get_angle_offsets(
             b = canvas_height
             c = c
             x, y, t = symbols('x, y, t_0', integer=True)
+            diophantine_solution = None
 
             start_time = default_timer()
             if method == 'sympy':
@@ -90,13 +92,15 @@ def get_angle_offsets(
                 line_equation_rational = nsimplify(line_equation, rational=True, tolerance=0.00001)
                 # convert all coefficients to integers from the
                 # least common multiple of fraction denominators
-                line_equation_integer = line_equation_rational.as_numer_denom()[0]
+                line_equation_integer_fraction = line_equation_rational.as_numer_denom()
+                line_equation_lcm = line_equation_integer_fraction[1]
+                line_equation_integer = line_equation_integer_fraction[0]
             elif method == 'ssio':
-                line_equation = f'{a} * x + {c} - {b} * y'
+                line_equation = f'{a} * x - {b} * y'
                 a_rational = float_to_fraction(a, 5)
                 b_rational = float_to_fraction(b, 5)
                 c_rational = float_to_fraction(c, 5)
-                line_equation_rational = f'{a_rational} * x + {c_rational} - {b_rational} * y'
+                line_equation_rational = f'{a_rational} * x - {b_rational} * y'
                 line_equation_lcm = lcm(
                     a_rational.denominator,
                     b_rational.denominator,
@@ -105,19 +109,31 @@ def get_angle_offsets(
                 a_int = line_equation_lcm * a_rational
                 b_int = line_equation_lcm * b_rational
                 c_int = line_equation_lcm * c_rational
-                line_equation_integer = a_int * x + c_int - b_int * y
+                line_equation_integer = a_int * x - b_int * y
+                if c == 0:
+                    # Homogeneous Linear Diophantine equation (HLDE)
+                    # this section is for slight speed up when applicable
+                    gcd_ = gcd(int(a_int), int(b_int))
+                    x_int, y_int = b_int / gcd_, a_int / gcd_
+                    diophantine_solution = Tuple(x_int * t, y_int * t)
+                else:
+                    # Linear Diophantine equation (LDE)
+                    line_equation += f' + {c}'
+                    line_equation_rational += f' + {c_rational}'
+                    line_equation_integer += c_int
             else:
                 raise Exception(f'{method=} not valid')
 
             # from https://en.wikipedia.org/wiki/Diophantine_equation:
             # Finding all right triangles with integer side-lengths is
             # equivalent to solving the Diophantine equation
-            diophantine_solution = diop_linear(line_equation_integer)
+            if diophantine_solution is None:
+                diophantine_solution = diop_linear(line_equation_integer)
 
             execution_time = default_timer() - start_time
             logging.debug(f'{execution_time=}')
             logging.debug(
-                f'{line_equation=}, {line_equation_rational=}, {line_equation_integer=}, {diophantine_solution=}')
+                f'{line_equation=}, {line_equation_rational=}, {line_equation_lcm=}, {line_equation_integer=}, {diophantine_solution=}')
             if diophantine_solution == (None, None):
                 raise Exception('solution not possible')
             x_int, y_int = diophantine_solution.subs({t: solve_at})
@@ -350,6 +366,17 @@ class HatchMaker:
         msp.add_lwpolyline(points, close=True, dxfattribs={"color": 1})
         if doc_save:
             doc.saveas(f'{self.pat_title}.dxf')
+        return doc
+
+    def to_dict(self):
+        d = self.__dict__.copy()
+        d['hatch_lines'] = [hl.__dict__ for hl in d['hatch_lines']]
+        return d
+
+    @classmethod
+    def from_dict(cls, d):
+        d['hatch_lines'] = [HatchLine(**hl) for hl in d['hatch_lines']]
+        return cls(**d)
 
 
 def clean_special_characters(string):
