@@ -34,7 +34,7 @@ def test_pattycake():
         ],
     )
     hm.to_dxf()
-    assert hm.to_pat_str() == expected
+    assert hm.to_pat() == expected
 
 
 def test_single():
@@ -66,7 +66,7 @@ def test_single():
         ],
     )
     hm.to_dxf()
-    assert hm.to_pat_str() == expected
+    assert hm.to_pat() == expected
 
 
 @pytest.mark.parametrize(

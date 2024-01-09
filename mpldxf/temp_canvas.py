@@ -69,7 +69,7 @@ def run_canvas():
             canvas_height=canvas_height,
             round_decimals=4,
         )
-        print(hm.to_pat_str())
+        print(hm.to_pat())
         pat_fname = clean_pat_title(f'5x5StarBurst{canvas_width}_{canvas_height}')
         hm.to_dxf()
 

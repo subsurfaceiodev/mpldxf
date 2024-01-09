@@ -209,10 +209,12 @@ class HatchMaker:
     hatch_lines: Iterable[HatchLine] = None
     pat_title: str = 'title'
     pat_description: str = 'description'
-    pat_software: str = 'AutoCAD',
-    pat_units: str = 'MM',
-    pat_type: str = 'Model',
-    pat_title_safe = clean_pat_title(pat_title, software=pat_software)
+    pat_software: str = 'AutoCAD'
+    pat_units: str = 'Millimeters'
+    pat_type: str = 'Model'
+
+    def __post_init__(self):
+        self.pat_title_safe = clean_pat_title(self.pat_title, software=self.pat_software)
 
     @staticmethod
     def read_pat_str_as_df(pat_str):
@@ -322,7 +324,7 @@ class HatchMaker:
         self.hatch_lines = hatch_lines
         return self
 
-    def to_pat_str(
+    def to_pat(
             self,
             export_path=None,
     ):
@@ -392,6 +394,7 @@ class HatchMaker:
 
     def to_dict(self):
         d = self.__dict__.copy()
+        del d['pat_title_safe']
         d['hatch_lines'] = [hl.__dict__ for hl in d['hatch_lines']]
         return d
 
