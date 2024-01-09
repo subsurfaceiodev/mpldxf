@@ -42,6 +42,17 @@ def float_to_fraction(
     return multiplier
 
 
+def clean_special_characters(string):
+    return re.sub('\\W+', '', string)
+
+
+def get_clockwise_angle(x_distance, y_distance):
+    # angle in radians
+    angle = np.arctan2(y_distance, x_distance)
+    angle[angle < 0] = 2 * pi + angle[angle < 0]
+    return angle
+
+
 def get_angle_offsets(
         angle,
         round_decimals=4,
@@ -198,6 +209,10 @@ class HatchMaker:
     hatch_lines: Iterable[HatchLine] = None
     pat_title: str = 'title'
     pat_description: str = 'description'
+    pat_software: str = 'AutoCAD',
+    pat_units: str = 'MM',
+    pat_type: str = 'Model',
+    pat_title_safe = clean_pat_title(pat_title, software=pat_software)
 
     @staticmethod
     def read_pat_str_as_df(pat_str):
@@ -228,11 +243,13 @@ class HatchMaker:
         return df
 
     @staticmethod
-    def df_to_points(df):
+    def df_to_points(df, return_as_df=False):
         # useful for testing
         df = df.rename(columns={'x': 'x0', 'y': 'y0'})
         df['x1'] = df['x0'] + df['dash'] * np.cos(np.deg2rad(df['angle']))
         df['y1'] = df['y0'] + df['dash'] * np.sin(np.deg2rad(df['angle']))
+        if return_as_df:
+            return df
         p0 = list(zip(df['x0'], df['y0']))
         p1 = list(zip(df['x1'], df['y1']))
         return p0, p1
@@ -307,43 +324,43 @@ class HatchMaker:
 
     def to_pat_str(
             self,
-            pat_software='AutoCAD',
-            pat_units='MM',
-            pat_type='Model',
             export_path=None,
     ):
-        if pat_software == 'AutoCAD':
-            self.pat_title = clean_special_characters(self.pat_title)
+        if self.pat_software == 'AutoCAD':
             pat_str = [
-                f'*{self.pat_title},{self.pat_description}',
+                f'*{self.pat_title_safe},{self.pat_description}',
                 ';angle,x,y,shift,offset,dash,space',
             ]
-        elif pat_software == 'Revit':
+        elif self.pat_software == 'Revit':
             pat_str = [
-                f';%UNITS={PAT_UNITS_MAP[pat_units]}',
-                f'*{self.pat_title},{self.pat_description}',
-                f';%TYPE={pat_type.upper()}',
+                f';%UNITS={PAT_UNITS_MAP[self.pat_units]}',
+                f'*{self.pat_title_safe},{self.pat_description}',
+                f';%TYPE={self.pat_type.upper()}',
                 ';angle,x,y,shift,offset,dash,space',
             ]
         else:
-            raise Exception(f'{pat_software=} not valid')
+            raise Exception(f'{self.pat_software=} not valid')
 
         for hatch_line in self.hatch_lines:
             pat_str.append(hatch_line.to_str())
 
         pat_str = '\n'.join(pat_str + [''])
         if export_path is not None:
+            if isinstance(export_path, io.StringIO):
+                file = export_path
+            else:
+                file = open(f'{export_path}/{self.pat_title}.pat', 'a')
             print(
                 pat_str,
-                file=open(f'{export_path}/{self.pat_title}.pat', 'a'),
+                file=file,
                 end='',
             )
         return pat_str
 
     def to_dxf(
             self,
+            export_path=None,
             doc=None,
-            doc_save=True,
             poly_x_offset=0,
             scale=1.0,
     ):
@@ -364,8 +381,13 @@ class HatchMaker:
         points = [(poly_x_offset, 0), (poly_x_offset + 10, 0), (poly_x_offset + 10, 10), (poly_x_offset, 10)]
         hatch.paths.add_polyline_path(points)
         msp.add_lwpolyline(points, close=True, dxfattribs={"color": 1})
-        if doc_save:
-            doc.saveas(f'{self.pat_title}.dxf')
+        if export_path is not None:
+            if isinstance(export_path, io.StringIO):
+                file = export_path
+                doc.write(file)
+            else:
+                file = f'{export_path}/{self.pat_title}.dxf'
+                doc.saveas(file)
         return doc
 
     def to_dict(self):
@@ -377,14 +399,3 @@ class HatchMaker:
     def from_dict(cls, d):
         d['hatch_lines'] = [HatchLine(**hl) for hl in d['hatch_lines']]
         return cls(**d)
-
-
-def clean_special_characters(string):
-    return re.sub('\\W+', '', string)
-
-
-def get_clockwise_angle(x_distance, y_distance):
-    # angle in radians
-    angle = np.arctan2(y_distance, x_distance)
-    angle[angle < 0] = 2 * pi + angle[angle < 0]
-    return angle

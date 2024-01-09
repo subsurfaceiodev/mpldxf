@@ -77,7 +77,7 @@ def run_canvas():
 def run_timing():
     from timeit import default_timer
     start = default_timer()
-    for i in range(100):
+    for i in range(1):
         hm = HatchMaker().set_from_points(
             [
                 (0, 0),
@@ -97,7 +97,7 @@ def run_timing():
         )
     print(default_timer() - start)
     print(hm)
-    hm.to_dxf()
+    hm.to_dxf(export_path='.')
 
 
 # run_canvas()
