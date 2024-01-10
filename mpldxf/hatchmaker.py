@@ -12,6 +12,7 @@ import ezdxf
 import numpy as np
 import pandas as pd
 from math import lcm, gcd
+from itertools import pairwise
 
 pi = np.pi
 PAT_UNITS_MAP = {'Millimeters': 'MM', 'Inches': 'INCH'}
@@ -273,6 +274,29 @@ class HatchMaker:
             canvas_height,
         )
         return self
+
+    @staticmethod
+    def polylines_to_points(
+            polylines
+    ):
+        p0_all = []
+        p1_all = []
+        for p0, p1 in pairwise(polylines):
+            p0_all.append(p0)
+            p1_all.append(p1)
+        return p0_all, p1_all
+
+    @staticmethod
+    def polylines_list_to_points(
+            polylines_list
+    ):
+        p0_all = []
+        p1_all = []
+        for polylines in polylines_list:
+            p0, p1 = HatchMaker.polylines_to_points(polylines)
+            p0_all.extend(p0)
+            p1_all.extend(p1)
+        return p0_all, p1_all
 
     def set_from_points(
             self,
