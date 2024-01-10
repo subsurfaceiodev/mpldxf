@@ -387,8 +387,10 @@ class HatchMaker:
             self,
             export_path=None,
             doc=None,
-            poly_x_offset=0,
+            poly_side=10,
+            origin_factor=(0, 0),
             scale=1.0,
+            show_info=False,
     ):
         # adapted from https://ezdxf.readthedocs.io/en/stable/tutorials/hatch_pattern.html#tut-hatch-pattern
         if doc is None:
@@ -404,9 +406,18 @@ class HatchMaker:
             pattern_type=0,
             definition=[hatch_line.get_ezdxf_definition() for hatch_line in self.hatch_lines]
         )
-        points = [(poly_x_offset, 0), (poly_x_offset + 10, 0), (poly_x_offset + 10, 10), (poly_x_offset, 10)]
+        points = [
+            (origin_factor[1] * poly_side, origin_factor[0] * poly_side),
+            (origin_factor[1] * poly_side + poly_side, origin_factor[0] * poly_side),
+            (origin_factor[1] * poly_side + poly_side, origin_factor[0] * poly_side + poly_side),
+            (origin_factor[1] * poly_side, origin_factor[0] * poly_side + poly_side),
+        ]
         hatch.paths.add_polyline_path(points)
         msp.add_lwpolyline(points, close=True, dxfattribs={"color": 1})
+        if show_info:
+            msp.add_text(self.pat_title, height=0.5).set_placement(
+                (origin_factor[1] * poly_side, origin_factor[0] * poly_side)
+            )
         if export_path is not None:
             if isinstance(export_path, io.StringIO):
                 file = export_path
