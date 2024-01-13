@@ -276,24 +276,24 @@ class HatchMaker:
         return self
 
     @staticmethod
-    def polylines_to_points(
-            polylines
+    def polyline_to_points(
+            polyline
     ):
         p0_all = []
         p1_all = []
-        for p0, p1 in pairwise(polylines):
+        for p0, p1 in pairwise(polyline):
             p0_all.append(p0)
             p1_all.append(p1)
         return p0_all, p1_all
 
     @staticmethod
-    def polylines_list_to_points(
-            polylines_list
+    def polylines_to_points(
+            polylines
     ):
         p0_all = []
         p1_all = []
-        for polylines in polylines_list:
-            p0, p1 = HatchMaker.polylines_to_points(polylines)
+        for polyline in polylines:
+            p0, p1 = HatchMaker.polyline_to_points(polyline.coords)
             p0_all.extend(p0)
             p1_all.extend(p1)
         return p0_all, p1_all
@@ -416,7 +416,7 @@ class HatchMaker:
         msp.add_lwpolyline(points, close=True, dxfattribs={"color": 1})
         if show_info:
             msp.add_text(self.pat_title, height=0.5).set_placement(
-                (origin_factor[1] * poly_side, origin_factor[0] * poly_side)
+                (origin_factor[1] * poly_side, origin_factor[0] * poly_side + poly_side)
             )
         if export_path is not None:
             if isinstance(export_path, io.StringIO):
