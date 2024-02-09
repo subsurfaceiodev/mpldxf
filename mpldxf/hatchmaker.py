@@ -313,7 +313,7 @@ class HatchMaker:
             round_decimals=4,  # < 5 prevents invalid angles
             canvas_width=1.0,
             canvas_height=1.0,
-            method='new',
+            method='old',
             segments=None,
     ):
         if method == 'new':
