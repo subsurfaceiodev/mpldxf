@@ -437,22 +437,23 @@ class HatchMaker:
             doc = ezdxf.new()
         msp = doc.modelspace()
         hatch = msp.add_hatch()
-        hatch.set_pattern_fill(
-            self.pat_title,
-            color=7,
-            angle=0,
-            scale=scale,
-            style=0,
-            pattern_type=0,
-            definition=[hatch_line.get_ezdxf_definition() for hatch_line in self.hatch_lines]
-        )
         points = [
             (origin_factor[1] * poly_side, origin_factor[0] * poly_side),
             (origin_factor[1] * poly_side + poly_side, origin_factor[0] * poly_side),
             (origin_factor[1] * poly_side + poly_side, origin_factor[0] * poly_side + poly_side),
             (origin_factor[1] * poly_side, origin_factor[0] * poly_side + poly_side),
         ]
-        hatch.paths.add_polyline_path(points)
+        if self.hatch_lines:
+            hatch.set_pattern_fill(
+                self.pat_title,
+                color=7,
+                angle=0,
+                scale=scale,
+                style=0,
+                pattern_type=0,
+                definition=[hatch_line.get_ezdxf_definition() for hatch_line in self.hatch_lines]
+            )
+            hatch.paths.add_polyline_path(points)
         msp.add_lwpolyline(points, close=True, dxfattribs={"color": 1})
         if show_info:
             msp.add_text(self.pat_title, height=0.5).set_placement(
