@@ -15,25 +15,17 @@ def test_pattycake():
 '''
     hm = HatchMaker(
         pat_title='test_pattycake'
-    ).set_from_points(
-        [
-            (0.125, 0.05),
-            (0.125, 0.125),
-            (0.0366, 0.2134),
-            (0.375, 0.3179),
-            (0.375, 0.375),
-            (0.2866, 0.4634),
-        ],
-        [
-            (0.125, 0.125),
-            (0.2134, 0.2134),
-            (0.125, 0.125),
-            (0.375, 0.375),
-            (0.4634, 0.4634),
-            (0.375, 0.375),
+    ).set_from_segments(
+        segments=[
+            [(0.125, 0.05), (0.125, 0.125)],
+            [(0.125, 0.125), (0.2134, 0.2134)],
+            [(0.0366, 0.2134), (0.125, 0.125)],
+            [(0.375, 0.3179), (0.375, 0.375)],
+            [(0.375, 0.375), (0.4634, 0.4634)],
+            [(0.2866, 0.4634), (0.375, 0.375)],
         ],
     )
-    hm.to_dxf()
+    hm.to_dxf(export_path='.')
     assert hm.to_pat() == expected
 
 
@@ -49,23 +41,16 @@ def test_single():
 '''
     hm = HatchMaker(
         pat_title='test_single'
-    ).set_from_points(
-        [
-            (0.11, 0.00),
-            (0.15, 0.06),
-            (0.19, 0.00),
-            (0.23, 0.06),
-            (0.27, 0.00),
-        ],
-        [
-            (0.05, 0.12),
-            (0.11, 0.20),
-            (0.19, 0.18),
-            (0.27, 0.20),
-            (0.33, 0.12),
+    ).set_from_segments(
+        segments=[
+            [(0.11, 0.00), (0.05, 0.12)],
+            [(0.15, 0.06), (0.11, 0.20)],
+            [(0.19, 0.00), (0.19, 0.18)],
+            [(0.23, 0.06), (0.27, 0.20)],
+            [(0.27, 0.00), (0.33, 0.12)],
         ],
     )
-    hm.to_dxf()
+    hm.to_dxf(export_path='.')
     assert hm.to_pat() == expected
 
 
@@ -76,11 +61,12 @@ def test_single():
 def test_multiple_angles(angle_step):
     angles = np.arange(0, 360 + angle_step, angle_step)
     angle_rad = np.deg2rad(angles)
-    p1 = list(zip(0.1 * np.cos(angle_rad), 0.1 * np.sin(angle_rad)))
-    p0 = [(0, 0)] * len(p1)
-    hm = HatchMaker(pat_title=f'test_multiple_angles_{angle_step=}').set_from_points(
-        p0, p1,
+    segments = []
+    for p1 in list(zip(0.1 * np.cos(angle_rad), 0.1 * np.sin(angle_rad))):
+        segments.append([(0, 0), p1])
+    hm = HatchMaker(pat_title=f'test_multiple_angles_{angle_step=}').set_from_segments(
+        segments=segments,
         canvas_height=1,
         round_decimals=4
     )
-    hm.to_dxf()
+    hm.to_dxf(export_path='.')

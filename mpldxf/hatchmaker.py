@@ -278,118 +278,55 @@ class HatchMaker:
             canvas_width=1.0,
             canvas_height=1.0,
     ):
-        p0 = list(zip(frame['x0'], frame['y0']))
-        p1 = list(zip(frame['x1'], frame['y1']))
-        self.set_from_points(
-            p0,
-            p1,
+        segments = [
+            [
+                (t.x0, t.y0),
+                (t.x1, t.y1)
+            ] for t in frame.itertuples()
+        ]
+        self.set_from_segments(
+            segments,
             round_decimals,
             canvas_width,
             canvas_height,
         )
         return self
 
-    @staticmethod
-    def polyline_to_points(
-            polyline
-    ):
-        p0_all = []
-        p1_all = []
-        for p0, p1 in pairwise(polyline):
-            p0_all.append(p0)
-            p1_all.append(p1)
-        return p0_all, p1_all
-
-    @staticmethod
-    def polylines_to_points(
-            polylines
-    ):
-        p0_all = []
-        p1_all = []
-        for polyline in polylines:
-            p0, p1 = HatchMaker.polyline_to_points(polyline.coords)
-            p0_all.extend(p0)
-            p1_all.extend(p1)
-        return p0_all, p1_all
-
-    def set_from_points(
+    def set_from_segments(
             self,
-            p0,
-            p1,
+            segments,
             round_decimals=4,  # < 5 prevents invalid angles
             canvas_width=1.0,
             canvas_height=1.0,
-            method='old',
-            segments=None,
     ):
-        if method == 'new':
-            hatch_lines = []
-            for (p0, p1) in segments:
-                p0_x = p0[0]
-                p0_y = p0[1]
-                p1_x = p1[0]
-                p1_y = p1[1]
-                delta_x = p1_x - p0_x
-                delta_y = p1_y - p0_y
-                dash = np.sqrt(delta_x ** 2 + delta_y ** 2)
-                angle = get_clockwise_angle_scalar(delta_x, delta_y)
-                x, y = p0_x, p0_y
-                angle_degrees = np.rad2deg(angle)
-                try:
-                    dx, dy, d = get_angle_offsets(
-                        angle,
-                        round_decimals=round_decimals,
-                        canvas_width=canvas_width,
-                        canvas_height=canvas_height,
-                    )
-                except Exception as e:
-                    e.add_note(f'line with {angle_degrees=} {x=} {y=}')
-                    logging.exception(e)
-                    continue
-
-                space = d - dash
-                hatch_lines.append(HatchLine(
-                    angle_degrees, x, y, dx, dy, dash, -space
-                ))
-        else:
-            p0 = np.round(p0, round_decimals)
-            p1 = np.round(p1, round_decimals)
-
-            p0 = p0
-            p1 = p1
-            p0_x = p0[:, 0]
-            p0_y = p0[:, 1]
-            p1_x = p1[:, 0]
-            p1_y = p1[:, 1]
+        hatch_lines = []
+        for (p0, p1) in segments:
+            p0_x = round(p0[0], round_decimals)
+            p0_y = round(p0[1], round_decimals)
+            p1_x = round(p1[0], round_decimals)
+            p1_y = round(p1[1], round_decimals)
             delta_x = p1_x - p0_x
             delta_y = p1_y - p0_y
-            length = np.sqrt(delta_x ** 2 + delta_y ** 2)
-            angle_to = get_clockwise_angle(delta_x, delta_y)
+            dash = np.sqrt(delta_x ** 2 + delta_y ** 2)
+            angle = get_clockwise_angle_scalar(delta_x, delta_y)
+            x, y = p0_x, p0_y
+            angle_degrees = np.rad2deg(angle)
+            try:
+                dx, dy, d = get_angle_offsets(
+                    angle,
+                    round_decimals=round_decimals,
+                    canvas_width=canvas_width,
+                    canvas_height=canvas_height,
+                )
+            except Exception as e:
+                e.add_note(f'line with {angle_degrees=} {x=} {y=}')
+                logging.exception(e)
+                continue
 
-            hatch_lines = []
-            for angle, x, y, dash in zip(
-                    angle_to,
-                    p0_x,
-                    p0_y,
-                    length,
-            ):
-                angle_degrees = np.rad2deg(angle)
-                try:
-                    dx, dy, d = get_angle_offsets(
-                        angle,
-                        round_decimals=round_decimals,
-                        canvas_width=canvas_width,
-                        canvas_height=canvas_height,
-                    )
-                except Exception as e:
-                    e.add_note(f'line with {angle_degrees=} {x=} {y=}')
-                    logging.exception(e)
-                    continue
-
-                space = d - dash
-                hatch_lines.append(HatchLine(
-                    angle_degrees, x, y, dx, dy, dash, -space
-                ))
+            space = d - dash
+            hatch_lines.append(HatchLine(
+                angle_degrees, x, y, dx, dy, dash, -space
+            ))
 
         self.hatch_lines = hatch_lines
         return self
