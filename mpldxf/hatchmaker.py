@@ -96,6 +96,8 @@ def get_angle_offsets(
 
         def line_equation_handler(c=0, solve_at=1):
             method = 'ssio'
+            rational_equation_precision = 8  # TODO was 5, now 8 for usgs hatches, must study ideal value
+
             # line_equation: y = mx + b
             # linear diophantine equation: ax + by = c
             a = canvas_width * tan_angle_abs_fraction
@@ -109,7 +111,11 @@ def get_angle_offsets(
                 # this method is slow, was created mainly to validate ssio method
                 line_equation = a * x + c - b * y
                 # convert all floats to fractions:
-                line_equation_rational = nsimplify(line_equation, rational=True, tolerance=0.00001)
+                line_equation_rational = nsimplify(
+                    line_equation,
+                    rational=True,
+                    tolerance=1 * 10 ** -rational_equation_precision
+                )
                 # convert all coefficients to integers from the
                 # least common multiple of fraction denominators
                 line_equation_integer_fraction = line_equation_rational.as_numer_denom()
@@ -117,9 +123,9 @@ def get_angle_offsets(
                 line_equation_integer = line_equation_integer_fraction[0]
             elif method == 'ssio':
                 line_equation = f'{a} * x - {b} * y'
-                a_rational = float_to_fraction(a, 5)
-                b_rational = float_to_fraction(b, 5)
-                c_rational = float_to_fraction(c, 5)
+                a_rational = float_to_fraction(a, rational_equation_precision)
+                b_rational = float_to_fraction(b, rational_equation_precision)
+                c_rational = float_to_fraction(c, rational_equation_precision)
                 line_equation_rational = f'{a_rational} * x - {b_rational} * y'
                 line_equation_lcm = lcm(
                     a_rational.denominator,
