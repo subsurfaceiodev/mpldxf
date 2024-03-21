@@ -12,7 +12,6 @@ import ezdxf
 import numpy as np
 import pandas as pd
 from math import lcm, gcd
-from itertools import pairwise
 
 pi = np.pi
 PAT_UNITS_MAP = {'Millimeters': 'MM', 'Inches': 'INCH'}
@@ -67,6 +66,7 @@ def get_angle_offsets(
         round_decimals=4,
         canvas_width=1.0,
         canvas_height=1.0,
+        precision=8
 ):
     angle_degrees = np.rad2deg(angle)
     tan_angle = np.tan(angle)
@@ -96,7 +96,7 @@ def get_angle_offsets(
 
         def line_equation_handler(c=0, solve_at=1):
             method = 'ssio'
-            rational_equation_precision = 8  # TODO was 5, now 8 for usgs hatches, must study ideal value
+            rational_equation_precision = precision  # TODO was 5, now 8 for usgs hatches, must study ideal value
 
             # line_equation: y = mx + b
             # linear diophantine equation: ax + by = c
@@ -127,11 +127,13 @@ def get_angle_offsets(
                 b_rational = float_to_fraction(b, rational_equation_precision)
                 c_rational = float_to_fraction(c, rational_equation_precision)
                 line_equation_rational = f'{a_rational} * x - {b_rational} * y'
+
                 line_equation_lcm = lcm(
                     a_rational.denominator,
                     b_rational.denominator,
                     c_rational.denominator
                 )
+
                 a_int = line_equation_lcm * a_rational
                 b_int = line_equation_lcm * b_rational
                 c_int = line_equation_lcm * c_rational
@@ -298,6 +300,7 @@ class HatchMaker:
             round_decimals=4,  # < 5 prevents invalid angles
             canvas_width=1.0,
             canvas_height=1.0,
+            precision=8,
     ):
         hatch_lines = []
         for (p0, p1) in segments:
@@ -317,6 +320,7 @@ class HatchMaker:
                     round_decimals=round_decimals,
                     canvas_width=canvas_width,
                     canvas_height=canvas_height,
+                    precision=precision
                 )
             except Exception as e:
                 e.add_note(f'line with {angle_degrees=} {x=} {y=}')

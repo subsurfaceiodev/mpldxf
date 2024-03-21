@@ -52,7 +52,7 @@ def run_canvas():
                 [(0.375, 0.375), (0.125, 0.125)],
                 [(0.0938, 0.1875), (0.4063, 0.3125)],
                 [(0.0938, 0.3125), (0.4063, 0.1875)],
-                [(0.3125, 0.4063),(0.1875, 0.0938)],
+                [(0.3125, 0.4063), (0.1875, 0.0938)],
                 [(0.1875, 0.4063), (0.3125, 0.0938)],
             ],
             canvas_width=canvas_width,
@@ -67,7 +67,7 @@ def run_canvas():
 def run_timing():
     from timeit import default_timer
     start = default_timer()
-    for i in range(1):
+    for i in range(100):
         hm = HatchMaker().set_from_segments(
             segments=[
                 [(0, 0), (0.5, 0.2)],
@@ -84,5 +84,21 @@ def run_timing():
     hm.to_dxf(export_path='.')
 
 
-run_canvas()
-run_timing()
+def run_dense_pat():
+    hm = HatchMaker(
+        pat_title='dense_pat'
+    ).set_from_segments(
+        segments=[
+            [(0, 0), (0.501, 0.505)],
+        ],
+        canvas_width=1.055,
+        canvas_height=1,
+        round_decimals=4
+    )
+    print(hm.to_pat())
+    hm.to_dxf(export_path='.')
+
+
+# run_canvas()
+# run_timing()
+run_dense_pat()
