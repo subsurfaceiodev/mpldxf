@@ -5,6 +5,9 @@
     <content url="file://$MODULE_DIR$/../subsurfaceio/src/mpldxf">
       <sourceFolder url="file://$MODULE_DIR$/../subsurfaceio/src/mpldxf" isTestSource="false" />
     </content>
+    <content url="file://$MODULE_DIR$/../subsurfaceio/src/smtk">
+      <sourceFolder url="file://$MODULE_DIR$/../subsurfaceio/src/smtk" isTestSource="false" />
+    </content>
     <content url="file://$MODULE_DIR$/../subsurfaceio/src/svgelements">
       <sourceFolder url="file://$MODULE_DIR$/../subsurfaceio/src/svgelements" isTestSource="false" />
     </content>
