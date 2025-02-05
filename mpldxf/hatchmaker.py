@@ -4,13 +4,8 @@ from dataclasses import dataclass
 from fractions import Fraction
 from typing import Iterable
 import logging
-from sympy.solvers.diophantine.diophantine import diop_linear
-from sympy.core.containers import Tuple
-from sympy import symbols, nsimplify
 import io
-import ezdxf
 import numpy as np
-import pandas as pd
 from math import lcm, gcd
 
 pi = np.pi
@@ -68,6 +63,9 @@ def get_angle_offsets(
         canvas_height=1.0,
         precision=8
 ):
+    from sympy import symbols, nsimplify
+    from sympy.solvers.diophantine.diophantine import diop_linear
+    from sympy.core.containers import Tuple
     angle_degrees = np.rad2deg(angle)
     tan_angle = np.tan(angle)
     tan_angle_abs = abs(tan_angle)
@@ -235,6 +233,7 @@ class HatchMaker:
 
     @staticmethod
     def read_pat_str_as_df(pat_str):
+        import pandas as pd
         # useful for testing
         s_ = []
         for x in pat_str.splitlines():
@@ -379,6 +378,7 @@ class HatchMaker:
             scale=1.0,
             show_info=False,
     ):
+        import ezdxf
         # adapted from https://ezdxf.readthedocs.io/en/stable/tutorials/hatch_pattern.html#tut-hatch-pattern
         if doc is None:
             doc = ezdxf.new()
