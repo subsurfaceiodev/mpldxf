@@ -1,4 +1,5 @@
 import re
+import warnings
 from timeit import default_timer
 from dataclasses import dataclass
 from fractions import Fraction
@@ -300,6 +301,7 @@ class HatchMaker:
             canvas_width=1.0,
             canvas_height=1.0,
             precision=8,
+            on_errors='warn'
     ):
         hatch_lines = []
         for (p0, p1) in segments:
@@ -312,7 +314,7 @@ class HatchMaker:
             dash = np.sqrt(delta_x ** 2 + delta_y ** 2)
             angle = get_clockwise_angle_scalar(delta_x, delta_y)
             x, y = p0_x, p0_y
-            angle_degrees = np.rad2deg(angle)
+            angle_degrees = np.rad2deg(angle).item()
             try:
                 dx, dy, d = get_angle_offsets(
                     angle,
@@ -322,9 +324,16 @@ class HatchMaker:
                     precision=precision
                 )
             except Exception as e:
-                e.add_note(f'line with {angle_degrees=} {x=} {y=}')
-                logging.exception(e)
-                continue
+                note = f'Ignored line with {angle_degrees=},{x=},{y=}'
+                e.add_note(note)
+                if on_errors == 'ignore':
+                    logging.exception(e)
+                    continue
+                elif on_errors == 'warn':
+                    warnings.warn(note)
+                    continue
+                else:
+                    raise e
 
             space = d - dash
             hatch_lines.append(HatchLine(
