@@ -463,7 +463,7 @@ class RendererDXF(RendererBase):
         pass
 
     def draw_text(self, gc, x, y, s, prop, angle, ismath=False, mtext=None):
-        print('DXF draw_text', s)
+        # print('DXF draw_text', s)
         # print(x * 72 / 100, y * 72 / 100, s, mtext)
         # print(prop.__dict__)
         # print(dir(prop))
@@ -571,10 +571,10 @@ class RendererDXF(RendererBase):
         w, h = font.get_width_height()
         d = font.get_descent()
         scale = 1 / 64
-        w *= scale * 0.72 # if changed to 0.72 text is correctly wraped only for horizontal lines
+        w *= scale * 0.72  # if changed to 0.72 text is correctly wraped only for horizontal lines
         h *= scale * 1
         d *= scale * 1
-        print('DXF', s, w, h, d)
+        # print('DXF', s, w, h, d)
         return w, h, d
 
     def _get_font_ttf(self, prop):
@@ -632,8 +632,12 @@ class FigureCanvasDXF(FigureCanvasBase):
         """
         Write out a DXF file.
         """
+        import io
         drawing = self.draw()
-        drawing.saveas(filename)
+        if isinstance(filename, io.StringIO):
+            drawing.write(filename)
+        else:
+            drawing.saveas(filename)
 
     def get_default_filetype(self):
         return 'dxf'

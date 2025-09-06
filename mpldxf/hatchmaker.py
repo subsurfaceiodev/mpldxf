@@ -1,7 +1,7 @@
 import re
 import warnings
 from timeit import default_timer
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from fractions import Fraction
 from typing import Iterable
 import logging
@@ -208,7 +208,7 @@ class HatchLine:
     def to_str(self):
         data = [
             f'{x:.6f}' if i == 0 else f'{x:.8f}'
-            for i, x in enumerate(self.__dict__.values())
+            for i, x in enumerate(asdict(self).values())
         ]
         data_str = ','.join(data)
         return data_str
@@ -425,12 +425,10 @@ class HatchMaker:
         return doc
 
     def to_dict(self):
-        d = self.__dict__.copy()
-        del d['pat_title_safe']
-        d['hatch_lines'] = [hl.__dict__ for hl in d['hatch_lines']]
+        d = asdict(self)
         return d
 
     @classmethod
-    def from_dict(cls, d):
-        d['hatch_lines'] = [HatchLine(**hl) for hl in d['hatch_lines']]
-        return cls(**d)
+    def from_dict(cls, data):
+        data['hatch_lines'] = [HatchLine(**hl) for hl in data['hatch_lines']]
+        return cls(**data)
